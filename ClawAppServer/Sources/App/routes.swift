@@ -1,0 +1,33 @@
+import Vapor
+
+func routes(_ app: Application) throws {
+    let api = app.grouped("api", "v1")
+
+    // Health (public)
+    try api.register(collection: HealthController())
+
+    // Protected routes (bearer token)
+    let protected = api.grouped(BearerTokenMiddleware())
+    try protected.register(collection: SessionController())
+    try protected.register(collection: MessageController())
+    try protected.register(collection: FileController())
+
+    // WebSocket (bearer token via query param)
+    app.webSocket("api", "v1", "ws") { req, ws in
+        guard let token = try? req.query.get(String.self, at: "token"),
+              token == req.application.apiToken else {
+            try? await ws.close(code: .policyViolation)
+            return
+        }
+
+        let manager = req.application.clientWSManager
+        let handler = ClientWSHandler(
+            ws: ws,
+            manager: manager,
+            aiClient: req.application.aiClient,
+            db: req.db,
+            logger: req.logger
+        )
+        handler.start()
+    }
+}

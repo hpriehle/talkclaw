@@ -1,0 +1,33 @@
+# Swift
+.build/
+**/build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.resolved
+
+# Database
+*.sqlite
+
+# Environment
+.env
+
+# macOS
+.DS_Store
+
+# Xcode
+*.pbxuser
+*.perspectivev3
+xcuserdata/
+*.moved-aside
+*.hmap
+
+# iOS app (closed source)
+ClawApp/
+
+# Editor backups
+*.bak
+*.bak2
+*.backup
+*.orig
