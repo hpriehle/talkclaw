@@ -96,6 +96,22 @@ struct WidgetServeController: RouteCollection {
             headers: headers.isEmpty ? nil : headers
         )
 
+        // Log errors and post system message for self-healing
+        if status >= 500, let widgetId = widget.id {
+            Task {
+                await Self.logWidgetError(
+                    db: req.db,
+                    clientWSManager: req.application.clientWSManager,
+                    widget: widget,
+                    widgetId: widgetId,
+                    method: req.method.string,
+                    routePath: routePath.isEmpty ? "/" : routePath,
+                    json: json,
+                    logger: req.logger
+                )
+            }
+        }
+
         let responseData = try JSONSerialization.data(withJSONObject: json)
         let response = Response(
             status: HTTPResponseStatus(statusCode: status),
@@ -103,5 +119,74 @@ struct WidgetServeController: RouteCollection {
         )
         response.headers.contentType = .json
         return response
+    }
+
+    /// Log widget route errors to DB and inject a system message into the originating chat session.
+    private static func logWidgetError(
+        db: any Database,
+        clientWSManager: ClientWSManager,
+        widget: Widget,
+        widgetId: UUID,
+        method: String,
+        routePath: String,
+        json: [String: Any],
+        logger: Logger
+    ) async {
+        let errorMessage = (json["error"] as? String) ?? "Unknown error"
+        let stackTrace = json["stack"] as? String
+
+        // Find the matching route for the error log FK
+        let route = try? await WidgetRoute.query(on: db)
+            .filter(\.$widget.$id == widgetId)
+            .filter(\.$method == method)
+            .filter(\.$path == routePath)
+            .first()
+
+        // Save error log
+        if let routeId = route?.id {
+            let errorLog = WidgetErrorLog()
+            errorLog.id = UUID()
+            errorLog.$widget.id = widgetId
+            errorLog.$route.id = routeId
+            errorLog.errorMessage = errorMessage
+            errorLog.stackTrace = stackTrace
+            errorLog.requestPath = routePath
+            errorLog.notifiedSession = widget.createdBySession
+            try? await errorLog.save(on: db)
+        }
+
+        // Post system message to the originating chat session
+        guard let sessionId = widget.createdBySession else {
+            logger.warning("Widget \(widget.slug) error but no createdBySession — cannot notify agent")
+            return
+        }
+
+        // Extract current TC:ROUTES for agent context
+        let routesSection = WidgetSectionParser.parseSections(from: widget.html)["TC:ROUTES"] ?? "(unavailable)"
+
+        let systemText = """
+        [Widget Error] slug: \(widget.slug)
+        Route: \(method) \(routePath)
+        Error: \(errorMessage)
+        Stack: \(stackTrace ?? "(no stack trace)")
+        Widget HTML (TC:ROUTES section):
+        \(routesSection)
+        """
+
+        if let message = try? Message(sessionId: sessionId, role: .system, content: .text(systemText)) {
+            try? await message.save(on: db)
+            logger.info("Posted widget error system message to session \(sessionId)")
+
+            // Notify iOS client so they see the error message
+            if let session = try? await Session.find(sessionId, on: db) {
+                session.lastMessageAt = Date()
+                try? await session.save(on: db)
+                await clientWSManager.sendToSession(
+                    .sessionUpdated(session.toDTO()),
+                    sessionId: sessionId,
+                    logger: logger
+                )
+            }
+        }
     }
 }

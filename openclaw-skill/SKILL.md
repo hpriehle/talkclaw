@@ -315,6 +315,15 @@ All widgets automatically load `/static/talkclaw.css`. Use these CSS custom prop
 | `.tc-metric-label` | Metric label (13px secondary) |
 | `.tc-shimmer` | Loading skeleton animation |
 | `.tc-error-state` | Error display card |
+| `.tc-grid-2` / `.tc-grid-3` | CSS grid with 2 or 3 equal columns |
+| `.tc-table` | Styled table (apply to `<table>`) — borders, padding, alternating rows |
+| `.tc-progress` | Progress bar container (6px height) |
+| `.tc-progress-bar` | Progress bar fill (set `width: X%`) — add `.tc-success/.tc-error/.tc-warning` for color |
+| `.tc-badge` | Small pill/tag — add `.tc-badge-accent/.tc-badge-success/.tc-badge-error/.tc-badge-warning` |
+| `.tc-divider` | Horizontal rule with subtle border |
+| `.tc-list` | Vertical list with gap between items |
+| `.tc-truncate` | Text truncation with ellipsis |
+| `.tc-w-full` | width: 100% |
 
 ---
 

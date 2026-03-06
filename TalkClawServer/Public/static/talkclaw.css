@@ -221,3 +221,100 @@ html, body {
     background: var(--tc-surface-4);
     border-radius: 2px;
 }
+
+/* Grid layouts */
+.tc-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--tc-space-md); }
+.tc-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--tc-space-md); }
+
+/* Table */
+.tc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.tc-table th,
+.tc-table td {
+    padding: var(--tc-space-sm) var(--tc-space-md);
+    text-align: left;
+    border-bottom: 1px solid var(--tc-border);
+}
+
+.tc-table th {
+    font-weight: 600;
+    color: var(--tc-text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.tc-table tr:last-child td {
+    border-bottom: none;
+}
+
+.tc-table tr:nth-child(even) td {
+    background: var(--tc-surface-2);
+}
+
+/* Progress bar */
+.tc-progress {
+    width: 100%;
+    height: 6px;
+    background: var(--tc-surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.tc-progress-bar {
+    height: 100%;
+    background: var(--tc-accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.tc-progress-bar.tc-success { background: var(--tc-success); }
+.tc-progress-bar.tc-error { background: var(--tc-error); }
+.tc-progress-bar.tc-warning { background: var(--tc-warning); }
+
+/* Badge */
+.tc-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--tc-surface-3);
+    color: var(--tc-text-secondary);
+}
+
+.tc-badge-accent { background: var(--tc-accent-dim); color: var(--tc-accent); }
+.tc-badge-success { background: rgba(52, 211, 153, 0.12); color: var(--tc-success); }
+.tc-badge-error { background: rgba(249, 112, 102, 0.12); color: var(--tc-error); }
+.tc-badge-warning { background: rgba(245, 158, 11, 0.12); color: var(--tc-warning); }
+
+/* Divider */
+.tc-divider {
+    height: 1px;
+    background: var(--tc-border);
+    border: none;
+    margin: var(--tc-space-md) 0;
+}
+
+/* List */
+.tc-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tc-space-sm);
+    list-style: none;
+}
+
+/* Truncate */
+.tc-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Width utilities */
+.tc-w-full { width: 100%; }
