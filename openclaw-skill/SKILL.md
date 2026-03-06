@@ -1,0 +1,573 @@
+---
+name: talkclaw
+description: "TalkClaw iOS chat app with AI-generated widget engine. Use when: messages arrive via TalkClaw (session key starts with 'talkclaw-'), user asks for widgets/dashboards/trackers, or you need to create interactive mini-apps. Provides complete widget lifecycle: create, update, serve, pin to dashboard — all via REST API."
+version: 2.0.0
+author: "Harrison Riehle"
+---
+
+# TalkClaw Skill
+
+You are the AI behind TalkClaw — an iOS app that lets users chat with their OpenClaw agent from their phone. When someone messages you through TalkClaw, their message arrives as a `chat.send` RPC with a session key like `talkclaw-{uuid}`.
+
+## Architecture
+
+```
+iPhone (TalkClaw) → Vapor Server (REST + WebSocket) → OpenClaw Gateway → You
+```
+
+The user runs a self-hosted Vapor server that acts as middleware between the iOS app and your OpenClaw gateway. The server is at `https://clawapp.clntacq.com`. There is no TalkClaw account — the user owns everything.
+
+## What the User Sees
+
+### Chat (Primary Screen)
+- Messages render **markdown** — use bold, italic, headers, lists, links freely
+- **Code blocks** with syntax highlighting and a copy button — always specify the language
+- Streaming responses — text appears in real-time as you type
+- Agent status indicator shows "Active" while you're responding
+- Messages are persisted server-side and paginated (50 per page)
+- **Widgets** appear inline in the chat as interactive cards powered by WKWebView
+
+### Session Management
+- **Create** new chat sessions (pencil icon)
+- **Pin** sessions to keep them at the top
+- **Archive** sessions to hide without deleting
+- **Delete** sessions via long-press context menu
+- Sessions are sorted: pinned first, then by most recent message
+
+### Dashboard
+- 2-column grid of pinned widgets
+- col_span 1 = half width, col_span 2 = full width
+- Pull-to-refresh reloads all widgets
+- Long-press for Edit Mode (reorder, remove)
+
+## Message Types
+
+| Type | How It Appears |
+|------|---------------|
+| **text** | Markdown-rendered message bubble |
+| **code** | Syntax-highlighted block with language label + copy button |
+| **image** | Image with optional caption |
+| **file** | File icon with name and size |
+| **system** | Italic system message |
+| **error** | Red warning message |
+| **widget** | Interactive WKWebView card with glass chrome |
+
+For best results on mobile:
+- Keep code blocks concise — the screen is narrow
+- Use headers and lists for structure
+- Prefer short paragraphs over walls of text
+
+---
+
+## Widget Engine
+
+### When to Build a Widget
+
+✅ **BUILD a widget when:**
+- User says "show me", "track", "monitor", "chart", "dashboard", "widget"
+- User asks for something that benefits from persistent interactive UI
+- User requests the same data 3+ times (proactively offer)
+- User wants to visualize, compare, or track something over time
+
+❌ **DON'T build a widget when:**
+- A simple text/markdown response suffices
+- User just wants a one-time answer
+- The request is conversational, not data-driven
+
+### Before Creating a Widget
+
+1. **Check the Widget Library first** — call `GET /api/v1/widgets` to see existing widgets
+2. If a similar widget exists, **update it** via PATCH instead of creating a duplicate
+3. Plan the widget: what data, what UI, what backend routes needed
+
+### Widget File Structure
+
+Every widget is a single HTML file with named sections. You MUST follow this template:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="tc-widget-slug" content="SLUG">
+<meta name="tc-widget-title" content="TITLE">
+<meta name="tc-widget-description" content="DESCRIPTION">
+<link rel="stylesheet" href="/static/talkclaw.css">
+</head>
+<body>
+
+<!-- TC:VARS
+{
+  "example_var": "default_value",
+  "refresh_interval_ms": 30000
+}
+-->
+
+<!-- TC:HTML -->
+<div class="tc-glass" id="root">
+  <!-- Widget markup here -->
+</div>
+<!-- /TC:HTML -->
+
+<!-- TC:STYLE -->
+<style>
+/* Widget-specific styles — use var(--tc-*) tokens */
+</style>
+<!-- /TC:STYLE -->
+
+<!-- TC:SCRIPT -->
+<script src="/static/talkclaw-bridge.js"></script>
+<script>
+const vars = TalkClaw.vars;
+// Widget JavaScript logic here
+</script>
+<!-- /TC:SCRIPT -->
+
+<!-- TC:ROUTES
+[
+  {
+    "method": "GET",
+    "path": "/data",
+    "description": "Fetch widget data",
+    "handler": "const rows = await ctx.db.query('SELECT ...'); return { status: 200, json: rows };"
+  }
+]
+-->
+
+</body>
+</html>
+```
+
+### Named Sections Reference
+
+| Section | Type | Description |
+|---------|------|-------------|
+| TC:VARS | JSON object | Default render variables. Merged with live `render_vars` from DB at serve time. |
+| TC:HTML | HTML markup | The widget's DOM structure. Always wrap in `<div class="tc-glass" id="root">`. |
+| TC:STYLE | CSS in `<style>` tag | Widget-specific CSS. Use `var(--tc-*)` tokens from talkclaw.css. |
+| TC:SCRIPT | JS in `<script>` tag | All widget logic: data fetching, interactivity, bridge calls. Must include `<script src="/static/talkclaw-bridge.js"></script>` first. |
+| TC:ROUTES | JSON array | Backend route handler definitions. Extracted by Vapor, stored in `widget_routes`, NOT sent to browser. |
+
+### Render Variables
+
+Render variables are key-value pairs injected into the HTML as `window.TALKCLAW_VARS` before script execution. TC:VARS defines defaults; live DB values override them.
+
+Examples:
+- Lead count widget: `{ "filter_status": "new", "highlight_threshold": 50, "refresh_interval_ms": 30000 }`
+- Training widget: `{ "training_week": 14, "goal_miles": 40 }`
+
+Render variables are NOT secrets. Anything requiring credentials must live in a backend route handler.
+
+---
+
+## API Reference
+
+**Base URL:** `https://clawapp.clntacq.com`
+**Auth:** All `/api/v1/*` endpoints require `Authorization: Bearer clw_...`
+
+### Widget Lifecycle
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| GET | /api/v1/widgets | — | List all widgets. `?surface=inline\|dashboard` filter |
+| POST | /api/v1/widgets | `{ slug, title, description, surface, html }` | Create widget. Returns full WidgetDTO |
+| GET | /api/v1/widgets/:slug | — | Fetch full widget including html and render_vars |
+| PATCH | /api/v1/widgets/:slug | `{ sections: { "TC:SCRIPT": "..." } }` | Update specific sections only |
+| DELETE | /api/v1/widgets/:slug | — | Delete widget and all related data |
+| GET | /api/v1/widgets/:slug/versions | — | List version snapshots |
+| POST | /api/v1/widgets/:slug/rollback/:version | — | Restore a previous version |
+
+**Creating a widget:**
+```json
+POST /api/v1/widgets
+{
+  "slug": "lead-tracker",
+  "title": "Lead Tracker",
+  "description": "Shows current lead count and conversion rates",
+  "surface": "inline",
+  "html": "<!DOCTYPE html>..."
+}
+```
+
+**Updating a widget (section-targeted):**
+```json
+PATCH /api/v1/widgets/lead-tracker
+{
+  "sections": {
+    "TC:SCRIPT": "<script src=\"/static/talkclaw-bridge.js\"></script>\n<script>\n// Updated JS\n</script>",
+    "TC:ROUTES": "[{\"method\":\"GET\",\"path\":\"/data\",\"description\":\"...\",\"handler\":\"...\"}]"
+  }
+}
+```
+
+Only send sections you're changing. Vapor merges them into the stored HTML, increments version, snapshots the previous version, re-registers routes in sandbox. iOS receives `widgetUpdated` WebSocket event and reloads.
+
+### Render Variables
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| PATCH | /api/v1/widgets/:slug/vars | `{ key: value }` | Merge-update render_vars |
+| PUT | /api/v1/widgets/:slug/vars | `{ key: value }` | Replace entire render_vars |
+| DELETE | /api/v1/widgets/:slug/vars/:key | — | Remove single variable |
+
+### Dashboard
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| GET | /api/v1/dashboard | — | Fetch ordered layout |
+| PUT | /api/v1/dashboard | `[{ slug, position, col_span }]` | Replace full layout |
+| POST | /api/v1/dashboard/:slug | `{ col_span: 1 }` | Pin widget (1=half, 2=full) |
+| DELETE | /api/v1/dashboard/:slug | — | Unpin |
+| PATCH | /api/v1/dashboard/:slug | `{ col_span: 2 }` | Update col_span |
+
+### Sessions
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/v1/sessions | List all sessions |
+| POST | /api/v1/sessions | Create session `{ title?: string }` |
+| GET | /api/v1/sessions/:id | Get session |
+| PATCH | /api/v1/sessions/:id | Update `{ title?, isPinned?, isArchived? }` |
+| DELETE | /api/v1/sessions/:id | Delete session + messages |
+
+### Messages
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/v1/sessions/:id/messages?page=1&perPage=50 | Paginated messages |
+| POST | /api/v1/sessions/:id/messages | Send message `{ content: string }` |
+
+### Files
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/v1/files | List root directory |
+| GET | /api/v1/files/{path} | List directory or download file |
+| POST | /api/v1/files/{path} | Upload file (50MB max) |
+| DELETE | /api/v1/files/{path} | Delete file |
+
+### Health
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/v1/health | `{ status, version, openclawConnected }` (no auth) |
+
+---
+
+## TalkClaw Design System (talkclaw.css)
+
+All widgets automatically load `/static/talkclaw.css`. Use these CSS custom properties for native look:
+
+### Colors
+```css
+--tc-bg: #0A0A0A              /* Deepest background */
+--tc-surface-1: #0E0E0E       /* Surface layer 1 */
+--tc-surface-2: #161616        /* Surface layer 2 (cards) */
+--tc-surface-3: #1E1E1E        /* Surface layer 3 (elevated) */
+--tc-surface-4: #282828        /* Surface layer 4 (highest) */
+--tc-accent: #5B9EF5           /* Primary accent blue */
+--tc-accent-light: #8BBDFF     /* Light accent */
+--tc-accent-dim: rgba(91,158,245,0.12)   /* Subtle accent bg */
+--tc-text-primary: rgba(255,255,255,0.9)  /* Main text */
+--tc-text-secondary: rgba(255,255,255,0.5) /* Secondary text */
+--tc-text-tertiary: rgba(255,255,255,0.3)  /* Tertiary text */
+--tc-success: #34D399          /* Green */
+--tc-error: #F97066            /* Red */
+--tc-warning: #F59E0B          /* Amber */
+--tc-info: #818CF8             /* Purple */
+--tc-border: rgba(255,255,255,0.08)       /* Default border */
+```
+
+### Spacing & Radius
+```css
+--tc-space-xs: 4px    --tc-space-sm: 8px    --tc-space-md: 16px
+--tc-space-lg: 24px   --tc-space-xl: 32px
+--tc-radius-sm: 8px   --tc-radius-md: 12px  --tc-radius-lg: 16px  --tc-radius-xl: 22px
+```
+
+### Typography
+```css
+--tc-font: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif
+--tc-font-mono: 'SF Mono', ui-monospace, monospace
+```
+
+### Utility Classes
+
+| Class | Effect |
+|-------|--------|
+| `.tc-glass` | Glass card (blur bg, border, rounded, padded) — use as root wrapper |
+| `.tc-card` | Simple card (surface-2 bg, border, rounded, padded) |
+| `.tc-btn` | Base button style |
+| `.tc-btn-primary` | Blue accent button |
+| `.tc-btn-secondary` | Dark surface button |
+| `.tc-btn-ghost` | Transparent accent text button |
+| `.tc-text-primary/secondary/tertiary` | Text color classes |
+| `.tc-text-accent/success/error/warning` | Semantic text colors |
+| `.tc-text-xs/sm/base/lg/xl/2xl` | Font sizes (11-28px) |
+| `.tc-text-mono` | Monospace font |
+| `.tc-font-semibold/bold` | Font weight |
+| `.tc-flex` / `.tc-flex-col` | Flexbox layout |
+| `.tc-items-center` | align-items: center |
+| `.tc-justify-between` | justify-content: space-between |
+| `.tc-gap-xs/sm/md/lg` | Gap spacing |
+| `.tc-p-sm/md/lg` | Padding |
+| `.tc-metric` | Large metric number (28px bold) |
+| `.tc-metric-label` | Metric label (13px secondary) |
+| `.tc-shimmer` | Loading skeleton animation |
+| `.tc-error-state` | Error display card |
+
+---
+
+## TalkClaw JS Bridge (talkclaw-bridge.js)
+
+Available as `TalkClaw.*` in widget scripts:
+
+| Method | Description |
+|--------|-------------|
+| `TalkClaw.vars` | Object — injected render variables |
+| `TalkClaw.sendMessage(text)` | Send a text message to the chat session |
+| `TalkClaw.sendStructured(type, data)` | Send structured event (e.g. `widget_error`, `widget_action`) |
+| `TalkClaw.setVars(newVars)` | Update render variables (merges with existing) |
+| `TalkClaw.pinToDashboard(colSpan)` | Pin widget to dashboard (1=half, 2=full) |
+| `TalkClaw.dismiss()` | Collapse widget in chat view |
+| `TalkClaw.reportHeight()` | Report content height for auto-sizing (called automatically) |
+| `TalkClaw.handleError(error, context)` | Show error card with Retry + Report buttons |
+
+### Auto-Behaviors
+- Height auto-reported on `load` and `resize`
+- Fetch interceptor catches 401 → refreshes session cookie → retries transparently
+
+---
+
+## Sandbox Route Handlers (TC:ROUTES)
+
+Route handlers run in isolated V8 contexts (isolated-vm). Each handler receives `(req, ctx)` and must return `{ status, json }`.
+
+### Handler Signature
+
+```javascript
+// Handler is the function body — receives req and ctx as globals
+const rows = await ctx.db.query('SELECT * FROM my_table WHERE id = $1', [req.params.id]);
+return { status: 200, json: rows };
+```
+
+### Request Object (req)
+
+```javascript
+req.method    // "GET", "POST", etc.
+req.path      // Route path (e.g. "/data")
+req.params    // URL path parameters
+req.query     // Query string parameters
+req.body      // Parsed JSON body (POST/PUT/PATCH)
+req.headers   // Request headers
+```
+
+### Context API (ctx)
+
+```javascript
+ctx.db.query(sql, params)     // Parameterized SQL query → rows array
+ctx.kv.get(key)               // Get from widget-scoped KV store → value
+ctx.kv.set(key, value)        // Set in widget-scoped KV store
+ctx.fetch(url, opts)          // HTTP fetch (GET/POST) → { status, body, headers }
+ctx.env.get(key)              // Read WIDGET_* prefixed env vars
+```
+
+### Handler Constraints
+- **10 second timeout** per invocation
+- **64MB memory limit** per V8 isolate
+- No filesystem access
+- No process spawning
+- No cross-widget data access
+- `ctx.db` queries run against the same Postgres used by TalkClaw
+- `ctx.kv` is automatically namespaced to the widget ID
+
+### Example Route Handlers
+
+**Simple data fetch:**
+```json
+{
+  "method": "GET",
+  "path": "/stats",
+  "description": "Get current stats",
+  "handler": "const result = await ctx.fetch('https://api.example.com/stats'); return { status: 200, json: result.body };"
+}
+```
+
+**KV-backed counter:**
+```json
+{
+  "method": "POST",
+  "path": "/increment",
+  "description": "Increment counter",
+  "handler": "let count = (await ctx.kv.get('count')) || 0; count++; await ctx.kv.set('count', count); return { status: 200, json: { count } };"
+}
+```
+
+**Database query:**
+```json
+{
+  "method": "GET",
+  "path": "/messages",
+  "description": "Get recent messages",
+  "handler": "const rows = await ctx.db.query('SELECT content, created_at FROM messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 10', [req.query.sessionId]); return { status: 200, json: rows };"
+}
+```
+
+---
+
+## Error Handling Convention
+
+### In Widget Frontend (MANDATORY)
+
+ALL fetch calls in TC:SCRIPT MUST be wrapped in try/catch:
+
+```javascript
+async function loadData() {
+  try {
+    const res = await fetch('/w/my-widget/data');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderData(data);
+  } catch (err) {
+    TalkClaw.handleError(err, 'Loading widget data');
+  }
+}
+```
+
+### Self-Healing Loop
+
+1. Route handler throws → sandbox logs to `widget_error_log`
+2. Vapor posts system message to the widget's `created_by_session` with error details + handler code
+3. You (the agent) see the error in chat context
+4. Fix via `PATCH /api/v1/widgets/:slug` — widget reloads automatically
+5. No user intervention needed
+
+---
+
+## Iteration Protocol
+
+When updating an existing widget:
+
+1. `GET /api/v1/widgets/:slug` — fetch current state
+2. Read the current sections to understand what exists
+3. Identify which section(s) need changes
+4. `PATCH /api/v1/widgets/:slug` with only the changed sections
+5. iOS receives `widgetUpdated` event and reloads
+
+NEVER recreate a widget that already exists. Always PATCH.
+
+---
+
+## Complete Widget Example
+
+Here's a full working widget — a simple counter with backend persistence:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="tc-widget-slug" content="tap-counter">
+<meta name="tc-widget-title" content="Tap Counter">
+<meta name="tc-widget-description" content="A persistent tap counter with daily reset">
+<link rel="stylesheet" href="/static/talkclaw.css">
+</head>
+<body>
+
+<!-- TC:VARS
+{
+  "label": "Taps Today"
+}
+-->
+
+<!-- TC:HTML -->
+<div class="tc-glass" id="root">
+  <div class="tc-flex tc-items-center tc-justify-between">
+    <div>
+      <div class="tc-metric-label" id="label">Taps Today</div>
+      <div class="tc-metric tc-text-accent" id="count">—</div>
+    </div>
+    <button class="tc-btn tc-btn-primary" id="tap-btn">Tap</button>
+  </div>
+</div>
+<!-- /TC:HTML -->
+
+<!-- TC:STYLE -->
+<style>
+#tap-btn {
+  font-size: 17px;
+  padding: var(--tc-space-md) var(--tc-space-lg);
+  border-radius: var(--tc-radius-xl);
+}
+#tap-btn:active {
+  transform: scale(0.95);
+}
+</style>
+<!-- /TC:STYLE -->
+
+<!-- TC:SCRIPT -->
+<script src="/static/talkclaw-bridge.js"></script>
+<script>
+const vars = TalkClaw.vars;
+document.getElementById('label').textContent = vars.label || 'Taps Today';
+
+async function loadCount() {
+  try {
+    const res = await fetch('/w/tap-counter/count');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    document.getElementById('count').textContent = data.count;
+  } catch (err) {
+    TalkClaw.handleError(err, 'Loading count');
+  }
+}
+
+document.getElementById('tap-btn').addEventListener('click', async () => {
+  try {
+    const res = await fetch('/w/tap-counter/increment', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    document.getElementById('count').textContent = data.count;
+  } catch (err) {
+    TalkClaw.handleError(err, 'Incrementing count');
+  }
+});
+
+loadCount();
+</script>
+<!-- /TC:SCRIPT -->
+
+<!-- TC:ROUTES
+[
+  {
+    "method": "GET",
+    "path": "/count",
+    "description": "Get current tap count",
+    "handler": "const count = (await ctx.kv.get('count')) || 0; return { status: 200, json: { count } };"
+  },
+  {
+    "method": "POST",
+    "path": "/increment",
+    "description": "Increment tap count by 1",
+    "handler": "let count = (await ctx.kv.get('count')) || 0; count++; await ctx.kv.set('count', count); return { status: 200, json: { count } };"
+  }
+]
+-->
+
+</body>
+</html>
+```
+
+---
+
+## Session Key Format
+
+Each TalkClaw session maps to an OpenClaw session key: `talkclaw-{sessionUUID}` (lowercased). This is how your gateway routes messages to the right conversation.
+
+## Authentication
+
+- The server auto-generates a `clw_` prefixed API token on first run
+- Stored in a Docker volume at `/data/.talkclaw-token`
+- iOS app stores it in Keychain after setup
+- All API calls use `Authorization: Bearer clw_...`
+- Widget routes use `tc_widget_session` cookie (auto-managed)
