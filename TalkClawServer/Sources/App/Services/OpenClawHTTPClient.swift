@@ -87,7 +87,7 @@ actor OpenClawHTTPClient {
                 self.chatHandlers[runId] = ChatHandler(
                     onDelta: { text in
                         let delta = WSMessage.ChatDeltaPayload(sessionId: sessionId, delta: text, messageId: messageId)
-                        Task { await clientManager.sendToSession(.chatDelta(delta), sessionId: sessionId) }
+                        Task { await clientManager.sendToSession(.chatDelta(delta), sessionId: sessionId, logger: self.logger) }
                     },
                     onFinal: { text in
                         self.chatHandlers.removeValue(forKey: runId)
@@ -112,7 +112,7 @@ actor OpenClawHTTPClient {
             }
 
             let dto = try message.toDTO()
-            await clientManager.sendToSession(.chatComplete(dto), sessionId: sessionId)
+            await clientManager.sendToSession(.chatComplete(dto), sessionId: sessionId, logger: logger)
 
             // Auto-title: if the session has no title yet, generate one from the user's message
             if let session = try? await Session.find(sessionId, on: db),
@@ -125,7 +125,7 @@ actor OpenClawHTTPClient {
                 if let firstMsg = firstUserMsg, let text = firstMsg.textContent {
                     session.title = String(text.prefix(50))
                     try? await session.save(on: db)
-                    await clientManager.sendToSession(.sessionUpdated(session.toDTO()), sessionId: sessionId)
+                    await clientManager.sendToSession(.sessionUpdated(session.toDTO()), sessionId: sessionId, logger: logger)
                 }
             }
 
@@ -378,7 +378,7 @@ actor OpenClawHTTPClient {
                 try await session.save(on: db)
             }
             let dto = try message.toDTO()
-            await clientManager.sendToSession(.chatComplete(dto), sessionId: sessionId)
+            await clientManager.sendToSession(.chatComplete(dto), sessionId: sessionId, logger: logger)
         } catch {
             logger.error("Failed to save stub response: \(error)")
         }

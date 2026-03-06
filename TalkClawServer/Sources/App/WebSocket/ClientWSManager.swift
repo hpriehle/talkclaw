@@ -33,7 +33,8 @@ final class ClientWSManager: Sendable {
     }
 
     /// Send a message only to connections subscribed to the given session.
-    func sendToSession(_ message: WSMessage, sessionId: UUID) async {
+    /// Falls back to broadcasting to all connections if none are subscribed.
+    func sendToSession(_ message: WSMessage, sessionId: UUID, logger: Logger? = nil) async {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
 
@@ -49,11 +50,18 @@ final class ClientWSManager: Sendable {
             }
         }
 
-        let allConnections = connections.withLockedValue { dict in
-            subscribedIds.compactMap { id in dict[id] }
+        let targetConnections: [WebSocket]
+        if subscribedIds.isEmpty {
+            // Fallback: no subscriptions found, broadcast to all connections
+            logger?.warning("No subscribed connections for session \(sessionId), falling back to broadcast")
+            targetConnections = connections.withLockedValue { Array($0.values) }
+        } else {
+            targetConnections = connections.withLockedValue { dict in
+                subscribedIds.compactMap { id in dict[id] }
+            }
         }
 
-        for ws in allConnections {
+        for ws in targetConnections {
             try? await ws.send(text)
         }
     }
