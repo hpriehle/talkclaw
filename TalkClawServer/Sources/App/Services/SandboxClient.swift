@@ -3,6 +3,11 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Darwin)
+import Darwin
+#endif
 
 /// Client for communicating with the talkclaw-sandbox sidecar over a Unix domain socket.
 /// Uses newline-delimited JSON-RPC protocol.
@@ -104,7 +109,11 @@ final class SandboxClient: Sendable {
 
     /// Synchronous Unix socket send/receive on a background thread.
     private static func syncSend(socketPath: String, payload: String) throws -> Any {
+        #if canImport(Glibc)
+        let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+        #else
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        #endif
         guard fd >= 0 else {
             throw Abort(.serviceUnavailable, reason: "Failed to create Unix socket")
         }
@@ -140,11 +149,12 @@ final class SandboxClient: Sendable {
         }
 
         // Send payload
-        let payloadData = Array(payload.utf8)
+        let payloadBytes = Array(payload.utf8)
         var totalSent = 0
-        while totalSent < payloadData.count {
-            let sent = payloadData.withUnsafeBufferPointer { buf in
-                Darwin.send(fd, buf.baseAddress!.advanced(by: totalSent), buf.count - totalSent, 0)
+        while totalSent < payloadBytes.count {
+            let remaining = payloadBytes.count - totalSent
+            let sent = payloadBytes.withUnsafeBufferPointer { buf -> Int in
+                write(fd, buf.baseAddress!.advanced(by: totalSent), remaining)
             }
             guard sent > 0 else {
                 throw Abort(.internalServerError, reason: "Failed to send to sandbox")
@@ -157,7 +167,7 @@ final class SandboxClient: Sendable {
         var readBuf = [UInt8](repeating: 0, count: 4096)
 
         while true {
-            let bytesRead = recv(fd, &readBuf, readBuf.count, 0)
+            let bytesRead = read(fd, &readBuf, readBuf.count)
             guard bytesRead > 0 else {
                 if bytesRead == 0 {
                     break // Connection closed
