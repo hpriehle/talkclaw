@@ -4,9 +4,10 @@ import SharedModels
 import Foundation
 
 /// Manages all connected iOS client WebSocket connections.
-/// Handles fan-out of messages from OpenClaw to all connected clients.
+/// Tracks per-session subscriptions for targeted delivery.
 final class ClientWSManager: Sendable {
     private let connections = NIOLockedValueBox<[UUID: WebSocket]>([:])
+    private let subscriptions = NIOLockedValueBox<[UUID: Set<UUID>]>([:])  // connectionId → sessionIds
 
     func add(_ id: UUID, ws: WebSocket) {
         connections.withLockedValue { $0[id] = ws }
@@ -14,9 +15,50 @@ final class ClientWSManager: Sendable {
 
     func remove(_ id: UUID) {
         _ = connections.withLockedValue { $0.removeValue(forKey: id) }
+        _ = subscriptions.withLockedValue { $0.removeValue(forKey: id) }
     }
 
-    /// Broadcast a WebSocket message to all connected clients.
+    func subscribe(connectionId: UUID, sessionId: UUID) {
+        subscriptions.withLockedValue { subs in
+            var set = subs[connectionId] ?? []
+            set.insert(sessionId)
+            subs[connectionId] = set
+        }
+    }
+
+    func unsubscribe(connectionId: UUID, sessionId: UUID) {
+        subscriptions.withLockedValue { subs in
+            subs[connectionId]?.remove(sessionId)
+        }
+    }
+
+    /// Send a message only to connections subscribed to the given session.
+    func sendToSession(_ message: WSMessage, sessionId: UUID) async {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+
+        guard let data = try? encoder.encode(message),
+              let text = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        // Find all connectionIds subscribed to this session
+        let subscribedIds = subscriptions.withLockedValue { subs in
+            subs.compactMap { (connId, sessionIds) in
+                sessionIds.contains(sessionId) ? connId : nil
+            }
+        }
+
+        let allConnections = connections.withLockedValue { dict in
+            subscribedIds.compactMap { id in dict[id] }
+        }
+
+        for ws in allConnections {
+            try? await ws.send(text)
+        }
+    }
+
+    /// Broadcast a WebSocket message to all connected clients (session-agnostic).
     func broadcast(_ message: WSMessage) async {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -32,7 +74,7 @@ final class ClientWSManager: Sendable {
         }
     }
 
-    /// Send a message to a specific session's subscribers.
+    /// Send a message to a specific connection.
     func send(_ message: WSMessage, to connectionId: UUID) async {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

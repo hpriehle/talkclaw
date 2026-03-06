@@ -10,7 +10,7 @@ final class ClientWSHandler {
     private let aiClient: OpenClawHTTPClient
     private let db: Database
     private let logger: Logger
-    private let connectionId = UUID()
+    let connectionId = UUID()
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -51,6 +51,9 @@ final class ClientWSHandler {
 
         switch message {
         case .sendChat(let payload):
+            // Auto-subscribe this connection to the session
+            manager.subscribe(connectionId: connectionId, sessionId: payload.sessionId)
+
             // Save user message
             do {
                 let userMsg = try Message(
@@ -81,12 +84,15 @@ final class ClientWSHandler {
         case .ping:
             await manager.send(.pong, to: connectionId)
 
-        case .subscribe, .unsubscribe:
-            // TODO: Track per-session subscriptions for targeted delivery
-            break
+        case .subscribe(let sessionId):
+            manager.subscribe(connectionId: connectionId, sessionId: sessionId)
+            logger.info("Client \(connectionId) subscribed to session \(sessionId)")
+
+        case .unsubscribe(let sessionId):
+            manager.unsubscribe(connectionId: connectionId, sessionId: sessionId)
+            logger.info("Client \(connectionId) unsubscribed from session \(sessionId)")
 
         default:
-            // Server-to-client messages shouldn't be sent by client
             break
         }
     }
