@@ -955,3 +955,471 @@ CREATE INDEX idx_sessions_parent ON sessions(parent_session_id);
 **Last Updated:** 2026-03-07  
 **Status:** Planning Complete - Ready for Implementation  
 **Next Review:** After Phase 1 prototype
+
+---
+
+## FINAL UPDATES (2026-03-07 19:09 UTC)
+
+### Critical Clarifications from User
+
+**1. OVERLAY - NOT PUSH DOWN ⚠️**
+
+User emphasized (with "!!!"): **Chats are NOT pushed down when pins unfurl.**
+
+**Unfurl behavior:**
+- Pins overlay on top of chat messages (dropdown style)
+- Chat messages behind become dimmed/blurred
+- Does NOT push chat down (accordion style)
+- Like iOS Calendar stacked meetings (see visual reference)
+
+**2. Scrolling Within Pinned Area**
+
+- Find optimal number of pins that fit on screen (likely 5-8)
+- Once that limit is reached, enable scroll within pinned area
+- Prevents unfurled pins from taking over entire screen
+
+**3. Agent Pin API - Detailed Documentation Required**
+
+User specifically requested: **"We need to have detailed documentation on the pinned message api so agents can pin and un pin messages"**
+
+See expanded "Agent Pin API" section below for comprehensive documentation.
+
+**4. User Manual Pin**
+
+Primary method: **Long press on message** → "Pin Message" option
+
+**5. Auto-fetch Confirmed**
+
+Reply-to-message: TalkClaw backend auto-fetches original message and includes in context.
+
+**6. Threads Deferred**
+
+User decision: "Defer threads for now"
+
+**7. Ready to Start**
+
+User confirmed: **"I think we have enough to get started!"**
+
+---
+
+## Agent Pin API - Comprehensive Documentation
+
+### Overview
+
+Agents need detailed API documentation to programmatically pin and unpin messages based on user instructions.
+
+### REST API Endpoints
+
+#### POST /api/v1/sessions/{session_id}/pins
+
+**Create a pin**
+
+**Request:**
+```http
+POST /api/v1/sessions/{session_id}/pins
+Content-Type: application/json
+Authorization: Bearer {token}
+
+{
+  "message_id": "msg-abc123",
+  "pin_type": "reminder|instruction|reference|custom",
+  "metadata": {
+    "reminder_id": "rem-456",
+    "priority": "high",
+    "custom_data": {}
+  }
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "pin_id": "pin-xyz789",
+  "message_id": "msg-abc123",
+  "pin_type": "reminder",
+  "pinned_at": "2026-03-07T19:00:00Z",
+  "pinned_by": "agent",
+  "pin_order": 1,
+  "message": {
+    "id": "msg-abc123",
+    "content": "Reminder: Send email at 5pm",
+    "sender": "agent",
+    "created_at": "2026-03-07T18:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: message_id required or invalid format
+- `404 Not Found`: message does not exist
+- `409 Conflict`: message already pinned in this session
+- `422 Unprocessable Entity`: invalid pin_type value
+
+---
+
+#### GET /api/v1/sessions/{session_id}/pins
+
+**List all pins for session**
+
+**Request:**
+```http
+GET /api/v1/sessions/{session_id}/pins
+Authorization: Bearer {token}
+```
+
+**Response (200 OK):**
+```json
+{
+  "pins": [
+    {
+      "pin_id": "pin-xyz789",
+      "message_id": "msg-abc123",
+      "pin_type": "reminder",
+      "metadata": { "reminder_id": "rem-456" },
+      "pinned_at": "2026-03-07T19:00:00Z",
+      "pinned_by": "agent",
+      "pin_order": 1,
+      "message": {
+        "id": "msg-abc123",
+        "content": "Reminder: Send email at 5pm",
+        "sender": "agent",
+        "created_at": "2026-03-07T18:00:00Z"
+      }
+    }
+  ],
+  "total_count": 5
+}
+```
+
+---
+
+#### DELETE /api/v1/sessions/{session_id}/pins/{message_id}
+
+**Unpin a message**
+
+**Request:**
+```http
+DELETE /api/v1/sessions/{session_id}/pins/{message_id}
+Authorization: Bearer {token}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Pin removed",
+  "message_id": "msg-abc123"
+}
+```
+
+**Error Responses:**
+- `404 Not Found`: pin does not exist for this message/session
+- `403 Forbidden`: agent cannot unpin user-created pins (optional policy)
+
+---
+
+#### PATCH /api/v1/sessions/{session_id}/pins/reorder
+
+**Reorder pins**
+
+**Request:**
+```http
+PATCH /api/v1/sessions/{session_id}/pins/reorder
+Content-Type: application/json
+Authorization: Bearer {token}
+
+{
+  "pin_order": ["pin-abc", "pin-xyz", "pin-123"]
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "updated_count": 3
+}
+```
+
+---
+
+### OpenClaw TalkClaw Skill Functions
+
+**Module:** `openclaw-skill/talkclaw-pin-api.js`
+
+```javascript
+/**
+ * Pin a message in TalkClaw
+ * 
+ * @param {string} messageId - The message ID to pin
+ * @param {object} options - Pin configuration
+ * @param {string} options.type - Pin type: 'reminder', 'instruction', 'reference', 'custom'
+ * @param {object} options.metadata - Additional data (reminder_id, priority, etc.)
+ * @returns {Promise<object>} Pin object with pin_id, message, metadata
+ * @throws {Error} If pin operation fails
+ * 
+ * @example
+ * const pin = await pinMessage('msg-123', {
+ *   type: 'reminder',
+ *   metadata: { reminder_id: 'rem-456', priority: 'high' }
+ * });
+ */
+async function pinMessage(messageId, { type = 'custom', metadata = {} } = {}) {
+  const response = await fetch(`${TALKCLAW_API}/sessions/${sessionId}/pins`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${TALKCLAW_TOKEN}`
+    },
+    body: JSON.stringify({
+      message_id: messageId,
+      pin_type: type,
+      metadata
+    })
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Pin failed (${response.status}): ${error.message}`);
+  }
+  
+  return await response.json();
+}
+
+/**
+ * Unpin a message
+ * 
+ * @param {string} messageId - The message ID to unpin
+ * @returns {Promise<object>} Success response
+ * @throws {Error} If unpin operation fails
+ * 
+ * @example
+ * await unpinMessage('msg-123');
+ */
+async function unpinMessage(messageId) {
+  const response = await fetch(`${TALKCLAW_API}/sessions/${sessionId}/pins/${messageId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${TALKCLAW_TOKEN}`
+    }
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Unpin failed (${response.status}): ${error.message}`);
+  }
+  
+  return await response.json();
+}
+
+/**
+ * List all pinned messages for current session
+ * 
+ * @returns {Promise<array>} Array of pin objects with full message content
+ * @throws {Error} If list operation fails
+ * 
+ * @example
+ * const pins = await listPinnedMessages();
+ * console.log(`${pins.length} pins found`);
+ */
+async function listPinnedMessages() {
+  const response = await fetch(`${TALKCLAW_API}/sessions/${sessionId}/pins`, {
+    headers: {
+      'Authorization': `Bearer ${TALKCLAW_TOKEN}`
+    }
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`List pins failed (${response.status}): ${error.message}`);
+  }
+  
+  const data = await response.json();
+  return data.pins;
+}
+
+/**
+ * Check if a message is currently pinned
+ * 
+ * @param {string} messageId - The message ID to check
+ * @returns {Promise<boolean>} True if message is pinned
+ * 
+ * @example
+ * if (await isMessagePinned('msg-123')) {
+ *   console.log('Message is already pinned');
+ * }
+ */
+async function isMessagePinned(messageId) {
+  const pins = await listPinnedMessages();
+  return pins.some(pin => pin.message_id === messageId);
+}
+
+/**
+ * Find pin by metadata
+ * 
+ * @param {string} key - Metadata key to search (e.g., 'reminder_id')
+ * @param {any} value - Value to match
+ * @returns {Promise<object|null>} Pin object if found, null otherwise
+ * 
+ * @example
+ * const reminderPin = await findPinByMetadata('reminder_id', 'rem-456');
+ * if (reminderPin) {
+ *   await unpinMessage(reminderPin.message_id);
+ * }
+ */
+async function findPinByMetadata(key, value) {
+  const pins = await listPinnedMessages();
+  return pins.find(pin => pin.metadata && pin.metadata[key] === value) || null;
+}
+
+module.exports = {
+  pinMessage,
+  unpinMessage,
+  listPinnedMessages,
+  isMessagePinned,
+  findPinByMetadata
+};
+```
+
+---
+
+### Agent Use Cases & Examples
+
+#### Use Case 1: Auto-Pin Reminders
+
+```javascript
+// When reminder is created via user command
+async function createReminderWithPin(reminderText, time) {
+  // Create reminder in reminders system
+  const reminder = await createReminder(reminderText, time);
+  
+  // Send reminder message to chat
+  const message = await sendMessage(`⏰ Reminder set: ${reminderText} at ${time}`);
+  
+  // Auto-pin the reminder message
+  await pinMessage(message.id, {
+    type: 'reminder',
+    metadata: {
+      reminder_id: reminder.id,
+      reminder_time: time,
+      auto_pinned: true
+    }
+  });
+  
+  return { reminder, message };
+}
+```
+
+#### Use Case 2: Unpin When Reminder Complete
+
+```javascript
+// When user marks reminder as done
+async function completeReminder(reminderId) {
+  // Find pinned message for this reminder
+  const pin = await findPinByMetadata('reminder_id', reminderId);
+  
+  if (pin) {
+    // Unpin the message
+    await unpinMessage(pin.message_id);
+    console.log(`Unpinned reminder: ${reminderId}`);
+  }
+  
+  // Delete reminder from reminders system
+  await deleteReminder(reminderId);
+}
+```
+
+#### Use Case 3: Pin Important Messages
+
+```javascript
+// User instruction: "Pin important messages"
+async function handleUserMessage(messageContent) {
+  const response = await generateResponse(messageContent);
+  const message = await sendMessage(response);
+  
+  // Determine if message is important
+  if (isImportant(response)) {
+    await pinMessage(message.id, {
+      type: 'instruction',
+      metadata: {
+        importance: 'high',
+        auto_pinned: true,
+        reason: 'Contains critical information'
+      }
+    });
+  }
+  
+  return message;
+}
+
+function isImportant(text) {
+  const keywords = ['important', 'critical', 'urgent', 'remember', 'must'];
+  return keywords.some(kw => text.toLowerCase().includes(kw));
+}
+```
+
+#### Use Case 4: Review and Clean Up Old Pins
+
+```javascript
+// Periodic cleanup: unpin old completed reminders
+async function cleanupOldPins() {
+  const pins = await listPinnedMessages();
+  const now = new Date();
+  
+  for (const pin of pins) {
+    // If pin is a reminder older than 24 hours
+    if (pin.pin_type === 'reminder') {
+      const pinnedAt = new Date(pin.pinned_at);
+      const ageHours = (now - pinnedAt) / (1000 * 60 * 60);
+      
+      if (ageHours > 24) {
+        console.log(`Unpinning old reminder: ${pin.message_id}`);
+        await unpinMessage(pin.message_id);
+      }
+    }
+  }
+}
+```
+
+---
+
+### Visual Reference
+
+**Stacking UI Inspiration:**
+- Reference image: `file_45---c88030bc-1a68-413b-831c-7bf4dfb4ec3a.jpg`
+- iOS Calendar stacked meetings
+- Apple Reminders card stack
+- 3D depth with shadows
+- Progressive reveal (slivers)
+
+**Design characteristics:**
+- Front card: full display
+- Back cards: partial (~20-30% visible)
+- Rounded corners
+- Subtle shadows for depth
+- Smooth animations
+- Modern, polished UI
+
+---
+
+## Updated Implementation Timeline
+
+**Phase 1: Foundation (v1.0) - READY TO START**
+
+**Scope confirmed by user:**
+1. ✅ Platform Context
+2. ✅ Pinned Posts (complete with overlay, stacking, agent API)
+3. ✅ Reply to Message (with auto-fetch)
+
+**Deferred:**
+- ❌ Reply as Thread (Phase 2+)
+- ❌ Non-persistent notifications (Future)
+
+**Estimated:** 3-4 weeks
+
+**User approval:** "I think we have enough to get started!"
+
+---
+
+**Last Updated:** 2026-03-07 19:09 UTC  
+**Status:** Planning Complete - All Questions Answered - Ready for Development
