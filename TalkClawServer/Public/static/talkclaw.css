@@ -318,3 +318,108 @@ html, body {
 
 /* Width utilities */
 .tc-w-full { width: 100%; }
+
+/* Scroll container */
+.tc-scroll {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Key-value pair layout */
+.tc-kv {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--tc-space-sm);
+}
+
+.tc-kv-label {
+    font-size: 13px;
+    color: var(--tc-text-secondary);
+}
+
+.tc-kv-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--tc-text-primary);
+    text-align: right;
+}
+
+/* Status dots */
+.tc-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tc-text-tertiary);
+    flex-shrink: 0;
+}
+
+.tc-status-dot--ok {
+    background: var(--tc-success);
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
+}
+
+.tc-status-dot--error {
+    background: var(--tc-error);
+    box-shadow: 0 0 6px rgba(249, 112, 102, 0.4);
+}
+
+.tc-status-dot--warn {
+    background: var(--tc-warning);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+}
+
+@keyframes tc-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.tc-status-dot--ok,
+.tc-status-dot--error,
+.tc-status-dot--warn {
+    animation: tc-pulse 2s ease-in-out infinite;
+}
+
+/* Trend indicators */
+.tc-trend-up {
+    color: var(--tc-success);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.tc-trend-up::before { content: "▲ "; font-size: 10px; }
+
+.tc-trend-down {
+    color: var(--tc-error);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.tc-trend-down::before { content: "▼ "; font-size: 10px; }
+
+/* Chart container */
+.tc-chart {
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+}
+
+.tc-chart svg {
+    width: 100%;
+    height: auto;
+}
+
+/* Refresh indicator */
+@keyframes tc-refresh-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+
+.tc-refresh-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--tc-accent);
+    animation: tc-refresh-pulse 2s ease-in-out infinite;
+}

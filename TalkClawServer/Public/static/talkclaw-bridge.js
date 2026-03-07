@@ -112,6 +112,67 @@
         return div.innerHTML;
     }
 
+    /**
+     * Start auto-refreshing data on an interval.
+     * Calls fetchFn immediately, then every intervalMs.
+     * Pauses when tab/app is hidden (Page Visibility API).
+     * Reports height after each fetch.
+     * @param {number} intervalMs - Refresh interval in milliseconds
+     * @param {function} fetchFn - Async function to call for data refresh
+     */
+    window.TalkClaw.startAutoRefresh = function(intervalMs, fetchFn) {
+        TalkClaw.stopAutoRefresh();
+
+        var timerId = null;
+
+        function tick() {
+            Promise.resolve(fetchFn()).then(function() {
+                TalkClaw.reportHeight();
+            }).catch(function(err) {
+                console.error('[TalkClaw.autoRefresh] error:', err);
+            });
+        }
+
+        function start() {
+            if (!timerId) {
+                timerId = setInterval(tick, intervalMs);
+            }
+        }
+
+        function stop() {
+            if (timerId) {
+                clearInterval(timerId);
+                timerId = null;
+            }
+        }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stop();
+            } else {
+                tick();
+                start();
+            }
+        });
+
+        tick();
+        start();
+
+        TalkClaw._autoRefreshStop = function() {
+            stop();
+            TalkClaw._autoRefreshStop = null;
+        };
+    };
+
+    /**
+     * Stop the current auto-refresh cycle.
+     */
+    window.TalkClaw.stopAutoRefresh = function() {
+        if (TalkClaw._autoRefreshStop) {
+            TalkClaw._autoRefreshStop();
+        }
+    };
+
     // Auto-report height on load and resize
     window.addEventListener('load', function() {
         TalkClaw.reportHeight();

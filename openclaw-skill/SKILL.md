@@ -73,9 +73,12 @@ The user runs a self-hosted Vapor server that acts as middleware between the iOS
 - Pull-to-refresh reloads all widgets
 - Long-press for Edit Mode (reorder, remove)
 
-### Dashboard Editing (Coming Soon)
-- Users will be able to reorder, resize, and remove dashboard widgets directly from the app
-- The agent will be able to programmatically manage dashboard layout via the existing API
+### Dashboard Widgets
+- 2-column grid of pinned widgets with scrolling enabled and larger height budget (up to 600pt for full-width)
+- Widgets auto-refresh with `TalkClaw.startAutoRefresh(intervalMs, fetchFn)` — handles visibility pausing
+- See **`dashboard-skill.md`** for complete patterns guide and example widgets (metric cards, data tables, multi-section layouts)
+- Users can build **anything** — the examples are starting points, not constraints
+- Edit mode supports reorder, resize (toggle col_span 1↔2), and remove
 
 ## Message Types
 
@@ -403,6 +406,13 @@ All widgets automatically load `/static/talkclaw.css`. Use these CSS custom prop
 | `.tc-list` | Vertical list with gap between items |
 | `.tc-truncate` | Text truncation with ellipsis |
 | `.tc-w-full` | width: 100% |
+| `.tc-scroll` | Scrollable container (`overflow-y: auto`) |
+| `.tc-kv` | Key-value pair flex row |
+| `.tc-kv-label` / `.tc-kv-value` | Key (secondary) and value (semibold) text |
+| `.tc-status-dot` | 8px status indicator — add `.tc-status-dot--ok/--error/--warn` |
+| `.tc-trend-up` / `.tc-trend-down` | Colored trend text with ▲/▼ prefix |
+| `.tc-chart` | SVG chart container (full width, flex) |
+| `.tc-refresh-dot` | Pulsing accent dot for active auto-refresh |
 
 ---
 
@@ -420,9 +430,12 @@ Available as `TalkClaw.*` in widget scripts:
 | `TalkClaw.dismiss()` | Collapse widget in chat view |
 | `TalkClaw.reportHeight()` | Report content height for auto-sizing (called automatically) |
 | `TalkClaw.handleError(error, context)` | Show error card with Retry + Report buttons |
+| `TalkClaw.startAutoRefresh(ms, fn)` | Auto-refresh: calls `fn` immediately + every `ms`. Pauses when hidden. |
+| `TalkClaw.stopAutoRefresh()` | Stop the current auto-refresh cycle |
 
 ### Auto-Behaviors
 - Height auto-reported on `load` and `resize`
+- `startAutoRefresh` reports height after each refresh and pauses via Page Visibility API
 - Fetch interceptor catches 401 → refreshes session cookie → retries transparently
 
 ---
