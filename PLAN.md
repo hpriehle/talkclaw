@@ -1423,3 +1423,475 @@ async function cleanupOldPins() {
 
 **Last Updated:** 2026-03-07 19:09 UTC  
 **Status:** Planning Complete - All Questions Answered - Ready for Development
+
+---
+
+## 5. Offline Support & Message Queueing
+
+### Overview
+
+**Mobile-first requirement:** TalkClaw must work seamlessly when phone loses connection.
+
+**Behavior:**
+- Messages sent while offline are queued locally
+- Queue persists across app restarts
+- Automatic send when connection returns
+- Clear UI indication of offline/pending status
+
+### User Experience
+
+**When Offline:**
+```
+┌─────────────────────────────┐
+│ ⚠️ Offline Mode             │  ← Status banner
+├─────────────────────────────┤
+│ Your message                │
+│ [Pending... 🔄]             │  ← Queued indicator
+├─────────────────────────────┤
+│ Agent: Previous message     │
+└─────────────────────────────┘
+```
+
+**When Connection Returns:**
+```
+┌─────────────────────────────┐
+│ ✅ Back Online - Sending... │  ← Auto-send notification
+├─────────────────────────────┤
+│ Your message                │
+│ [Sent ✓]                    │  ← Status updated
+└─────────────────────────────┘
+```
+
+### Technical Implementation
+
+#### Message Queue
+
+**Local Storage:**
+```swift
+struct QueuedMessage: Codable {
+    let id: UUID
+    let sessionId: String
+    let content: String
+    let replyToId: String?
+    let metadata: [String: Any]?
+    let queuedAt: Date
+    let retryCount: Int
+    let maxRetries: Int = 3
+}
+
+class MessageQueue {
+    private var queue: [QueuedMessage] = []
+    
+    // Persist to disk (UserDefaults or Core Data)
+    func save() {
+        let encoder = JSONEncoder()
+        if let encoded = try? encoder.encode(queue) {
+            UserDefaults.standard.set(encoded, forKey: "messageQueue")
+        }
+    }
+    
+    func load() {
+        if let data = UserDefaults.standard.data(forKey: "messageQueue") {
+            let decoder = JSONDecoder()
+            queue = (try? decoder.decode([QueuedMessage].self, from: data)) ?? []
+        }
+    }
+    
+    func enqueue(_ message: QueuedMessage) {
+        queue.append(message)
+        save()
+    }
+    
+    func dequeue() -> QueuedMessage? {
+        guard !queue.isEmpty else { return nil }
+        let message = queue.removeFirst()
+        save()
+        return message
+    }
+}
+```
+
+#### Connection Monitoring
+
+**Network Reachability:**
+```swift
+import Network
+
+class NetworkMonitor: ObservableObject {
+    @Published var isConnected: Bool = true
+    private let monitor = NWPathMonitor()
+    
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                self?.isConnected = path.status == .satisfied
+                
+                if self?.isConnected == true {
+                    self?.processQueue()
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue.global())
+    }
+    
+    func processQueue() {
+        // Send all queued messages
+        MessageQueueManager.shared.sendPendingMessages()
+    }
+}
+```
+
+#### Send Strategy
+
+**Message Send Flow:**
+```swift
+func sendMessage(_ content: String, replyTo: String? = nil) async throws {
+    let message = Message(
+        content: content,
+        replyToId: replyTo,
+        timestamp: Date()
+    )
+    
+    // Check connection
+    if NetworkMonitor.shared.isConnected {
+        // Send immediately
+        try await api.sendMessage(message)
+    } else {
+        // Queue for later
+        let queuedMessage = QueuedMessage(
+            id: UUID(),
+            sessionId: currentSessionId,
+            content: content,
+            replyToId: replyTo,
+            queuedAt: Date(),
+            retryCount: 0
+        )
+        
+        MessageQueue.shared.enqueue(queuedMessage)
+        
+        // Update UI to show pending
+        updateMessageStatus(message.id, status: .pending)
+    }
+}
+```
+
+#### Retry Logic
+
+**Exponential Backoff:**
+```swift
+func sendQueuedMessage(_ queuedMessage: QueuedMessage) async {
+    do {
+        try await api.sendMessage(queuedMessage)
+        
+        // Success - remove from queue
+        MessageQueue.shared.dequeue()
+        updateMessageStatus(queuedMessage.id, status: .sent)
+        
+    } catch {
+        // Retry with exponential backoff
+        if queuedMessage.retryCount < queuedMessage.maxRetries {
+            let delay = pow(2.0, Double(queuedMessage.retryCount)) // 1s, 2s, 4s
+            
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            
+            var updatedMessage = queuedMessage
+            updatedMessage.retryCount += 1
+            
+            MessageQueue.shared.enqueue(updatedMessage)
+            await sendQueuedMessage(updatedMessage)
+            
+        } else {
+            // Max retries exceeded - mark as failed
+            updateMessageStatus(queuedMessage.id, status: .failed)
+            
+            // Optionally: show retry button to user
+            showRetryOption(queuedMessage)
+        }
+    }
+}
+```
+
+### Message States
+
+**State Machine:**
+```
+┌─────────┐
+│ Drafting│
+└────┬────┘
+     │
+     ▼
+┌─────────┐    Offline    ┌─────────┐
+│ Sending ├──────────────→│ Pending │
+└────┬────┘               └────┬────┘
+     │                         │
+     │ Online                  │ Connection
+     │                         │ Restored
+     ▼                         ▼
+┌─────────┐               ┌─────────┐
+│  Sent   │               │ Sending │
+└─────────┘               └────┬────┘
+                               │
+                               ▼
+                          ┌─────────┐
+                          │ Sent or │
+                          │ Failed  │
+                          └─────────┘
+```
+
+**Status Indicators:**
+- 🔵 Drafting (being typed)
+- 🔄 Sending (in flight)
+- ⏳ Pending (queued, offline)
+- ✓ Sent (confirmed by server)
+- ❌ Failed (max retries exceeded)
+
+### Offline Caching - Data to Cache
+
+**Cache locally:**
+1. **Messages:** Recent conversation history (last 100 messages per session)
+2. **Pinned messages:** All pins for current session
+3. **User profile:** Name, avatar, preferences
+4. **Session metadata:** Session ID, created date, settings
+
+**Don't cache:**
+- Sensitive data (passwords, tokens - use Keychain)
+- Large media files (images > 5MB)
+- Entire conversation history (only recent)
+
+**Storage Strategy:**
+```swift
+// Core Data or Realm for structured data
+class OfflineCache {
+    // Messages cache
+    func cacheMessages(_ messages: [Message], for sessionId: String) {
+        // Store last 100 messages
+        let recent = messages.suffix(100)
+        // Save to Core Data
+    }
+    
+    // Pins cache
+    func cachePins(_ pins: [PinnedMessage], for sessionId: String) {
+        // Store all pins (usually < 10)
+    }
+    
+    // Clear old cache
+    func clearOldCache(olderThan days: Int = 7) {
+        // Remove messages older than 7 days
+    }
+}
+```
+
+### Sync Strategy
+
+**When Connection Returns:**
+
+1. **Send queued messages** (oldest first)
+2. **Fetch new messages** from server
+3. **Resolve conflicts** (if any)
+4. **Update cache** with latest data
+5. **Notify user** of any issues
+
+**Conflict Resolution:**
+```swift
+// If message sent offline has same content as server message
+// (rare, but possible with retry logic)
+func resolveConflict(_ localMessage: Message, _ serverMessage: Message) {
+    if localMessage.content == serverMessage.content &&
+       localMessage.timestamp.timeIntervalSince(serverMessage.timestamp) < 60 {
+        // Likely duplicate - keep server version
+        MessageQueue.shared.dequeue()
+        updateMessageStatus(localMessage.id, status: .sent)
+    }
+}
+```
+
+### UI/UX Details
+
+**Offline Banner:**
+- Top of screen
+- Yellow/orange background
+- "⚠️ Offline Mode" text
+- Dismissible after 3 seconds
+- Reappears if user tries to send
+
+**Message Status Icons:**
+```
+Your message               [🔄]  ← Sending
+Your message               [⏳]  ← Pending (offline)
+Your message               [✓]   ← Sent
+Your message               [❌]  ← Failed (tap to retry)
+```
+
+**Retry Button:**
+```
+┌─────────────────────────────┐
+│ ❌ Message failed to send   │
+│                             │
+│ [Retry] [Delete]            │
+└─────────────────────────────┘
+```
+
+### Database Schema Additions
+
+```sql
+-- Message queue table
+CREATE TABLE message_queue (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL,
+  content TEXT NOT NULL,
+  reply_to_id UUID,
+  metadata JSONB,
+  queued_at TIMESTAMP NOT NULL,
+  retry_count INTEGER DEFAULT 0,
+  max_retries INTEGER DEFAULT 3,
+  status VARCHAR(20) DEFAULT 'pending',  -- pending, sending, sent, failed
+  
+  FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Add status to messages table
+ALTER TABLE messages ADD COLUMN send_status VARCHAR(20) DEFAULT 'sent';
+-- Values: drafting, sending, pending, sent, failed
+
+CREATE INDEX idx_message_queue_session ON message_queue(session_id, queued_at);
+```
+
+### API Endpoint
+
+**Batch Send (for queue processing):**
+```http
+POST /api/v1/sessions/{session_id}/messages/batch
+Content-Type: application/json
+
+{
+  "messages": [
+    {
+      "client_id": "uuid-123",
+      "content": "First message",
+      "reply_to_id": null,
+      "queued_at": "2026-03-07T19:00:00Z"
+    },
+    {
+      "client_id": "uuid-456", 
+      "content": "Second message",
+      "reply_to_id": "msg-789",
+      "queued_at": "2026-03-07T19:01:00Z"
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "sent": [
+    {
+      "client_id": "uuid-123",
+      "server_id": "msg-abc",
+      "status": "sent"
+    }
+  ],
+  "failed": [
+    {
+      "client_id": "uuid-456",
+      "error": "Message invalid",
+      "status": "failed"
+    }
+  ]
+}
+```
+
+### Testing Scenarios
+
+**Test Cases:**
+
+1. **Airplane Mode:**
+   - Enable airplane mode
+   - Send 3 messages
+   - Verify queued status
+   - Disable airplane mode
+   - Verify messages send automatically
+
+2. **Poor Connection:**
+   - Throttle network to 2G speed
+   - Send message
+   - Verify retry logic
+   - Restore full speed
+   - Verify send completes
+
+3. **App Restart:**
+   - Send message while offline
+   - Force quit app
+   - Relaunch app (still offline)
+   - Verify message still in queue
+   - Go online
+   - Verify message sends
+
+4. **Max Retries:**
+   - Simulate server unavailable
+   - Send message
+   - Verify 3 retry attempts
+   - Verify failed state after max retries
+   - Verify retry button appears
+
+5. **Conflict Resolution:**
+   - Send message offline
+   - Message eventually sends
+   - Verify no duplicate on server
+
+### Performance Considerations
+
+**Queue Size Limits:**
+- Max 100 messages in queue
+- If exceeded, show warning
+- Oldest messages may be dropped (with user confirmation)
+
+**Battery Impact:**
+- Don't poll continuously
+- Use system network change notifications
+- Batch operations when possible
+- Limit retry attempts
+
+**Storage:**
+- Queue: ~1MB for 100 messages
+- Cache: ~10MB for 100 messages + media thumbnails
+- Auto-clear old cache (7 days)
+
+### Implementation Phase
+
+**Recommendation: Phase 1.5 or Phase 2**
+
+**Why not Phase 1:**
+- Core features should work online first
+- Offline is enhancement, not blocker
+- Need stable API before adding queue complexity
+
+**Why Phase 1.5/2:**
+- Essential for mobile app
+- User expectation for messaging apps
+- Prevents message loss
+- Better UX than error messages
+
+**Estimated:** 1-2 weeks development
+- Queue implementation: 3 days
+- Network monitoring: 2 days  
+- Retry logic: 2 days
+- UI/UX polish: 2 days
+- Testing: 1 week (critical to get right)
+
+### Success Metrics
+
+**Offline support working:**
+- ✅ Messages queue when offline
+- ✅ Queue persists across app restarts
+- ✅ Auto-send when connection returns
+- ✅ Clear status indicators
+- ✅ Retry logic handles failures
+- ✅ No message loss (<0.01% acceptable)
+- ✅ Battery impact minimal (<5% increase)
+
+---
+
+**Last Updated:** 2026-03-07 19:15 UTC  
+**Addition:** Offline support & message queueing  
+**Status:** Planning Complete - Ready for Development
