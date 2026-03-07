@@ -55,6 +55,31 @@ public struct MessageDTO: Codable, Sendable, Identifiable {
         self.content = content
         self.createdAt = createdAt
     }
+
+    /// Extracts searchable text from message content.
+    public var searchableText: String {
+        switch content {
+        case .text(let text): return text
+        case .code(_, let content): return content
+        case .system(let text): return text
+        case .error(let text): return text
+        case .image(_, let caption): return caption ?? ""
+        case .file(let name, _, _): return name
+        case .widget(let payload): return payload.title
+        }
+    }
+}
+
+// MARK: - Search
+
+public struct SearchResultDTO: Codable, Sendable {
+    public let message: MessageDTO
+    public let sessionTitle: String?
+
+    public init(message: MessageDTO, sessionTitle: String?) {
+        self.message = message
+        self.sessionTitle = sessionTitle
+    }
 }
 
 // MARK: - User
@@ -121,9 +146,25 @@ public struct UpdateSessionRequest: Codable, Sendable {
 
 public struct SendMessageRequest: Codable, Sendable {
     public let content: String
+    public let attachments: [AttachmentInfo]?
 
-    public init(content: String) {
+    public init(content: String, attachments: [AttachmentInfo]? = nil) {
         self.content = content
+        self.attachments = attachments
+    }
+}
+
+public struct AttachmentInfo: Codable, Sendable {
+    public let filename: String
+    public let mimeType: String
+    public let size: Int64
+    public let serverPath: String
+
+    public init(filename: String, mimeType: String, size: Int64, serverPath: String) {
+        self.filename = filename
+        self.mimeType = mimeType
+        self.size = size
+        self.serverPath = serverPath
     }
 }
 
