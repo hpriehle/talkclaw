@@ -19,6 +19,8 @@ actor OpenClawHTTPClient {
     private var chatHandlers: [String: ChatHandler] = [:]
     private var reconnectDelay: Duration = .seconds(2)
     private let maxReconnectDelay: Duration = .seconds(30)
+    private var connectionId: UInt64 = 0
+    private var lastPongAt: Date = Date()
 
     final class ChatHandler: @unchecked Sendable {
         let onDelta: (String) -> Void
@@ -167,7 +169,7 @@ actor OpenClawHTTPClient {
     // MARK: - WebSocket Connection
 
     private func ensureConnected() async {
-        if isConnected || ws != nil { return }
+        if isConnected { return }
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             connectContinuation = continuation
@@ -184,11 +186,14 @@ actor OpenClawHTTPClient {
     }
 
     private func startConnection() {
+        connectionId += 1
+        let connId = connectionId
+
         let wsURL = url
             .replacingOccurrences(of: "http://", with: "ws://")
             .replacingOccurrences(of: "https://", with: "wss://")
 
-        logger.info("Connecting to OpenClaw gateway: \(wsURL)")
+        logger.info("Connecting to OpenClaw gateway: \(wsURL) (conn \(connId))")
 
         Task { [self] in
             do {
@@ -199,28 +204,43 @@ actor OpenClawHTTPClient {
                 ) { ws in
                     ws.onText { [weak self] _, text in
                         guard let self else { return }
-                        Task { await self.handleMessage(text) }
+                        Task { await self.handleMessage(text, connId: connId) }
+                    }
+                    ws.onPong { [weak self] _, _ in
+                        guard let self else { return }
+                        Task { await self.receivedPong() }
                     }
                     ws.onClose.whenComplete { [weak self] _ in
                         guard let self else { return }
-                        Task { await self.handleDisconnect() }
+                        Task { await self.handleDisconnect(connId: connId) }
                     }
-                    Task { [self] in await self.setWebSocket(ws) }
+                    Task { [self] in await self.setWebSocket(ws, connId: connId) }
                 }
             } catch {
                 self.logger.error("Failed to connect to OpenClaw: \(error)")
-                await self.handleDisconnect()
+                await self.handleDisconnect(connId: connId)
             }
         }
     }
 
-    private func setWebSocket(_ ws: WebSocket) {
+    private func setWebSocket(_ ws: WebSocket, connId: UInt64) {
+        guard connId == connectionId else { return }
         self.ws = ws
-        logger.info("WebSocket connected to OpenClaw")
+        self.lastPongAt = Date()
+        logger.info("WebSocket connected to OpenClaw (conn \(connId))")
     }
 
-    private func handleDisconnect() {
-        logger.warning("OpenClaw WebSocket disconnected")
+    private func receivedPong() {
+        lastPongAt = Date()
+    }
+
+    private func handleDisconnect(connId: UInt64) {
+        guard connId == connectionId else { return }  // Stale callback — ignore
+        connectionId += 1  // Invalidate any other pending callbacks for this connection
+        logger.warning("OpenClaw WebSocket disconnected (conn \(connId))")
+        if let oldWs = ws, !oldWs.isClosed {
+            oldWs.close(code: .goingAway).whenComplete { _ in }
+        }
         ws = nil
         isConnected = false
         for (_, continuation) in pendingResponses {
@@ -249,7 +269,8 @@ actor OpenClawHTTPClient {
 
     // MARK: - Message Handling
 
-    private func handleMessage(_ text: String) {
+    private func handleMessage(_ text: String, connId: UInt64) {
+        guard connId == connectionId else { return }  // Stale callback
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
@@ -338,8 +359,9 @@ actor OpenClawHTTPClient {
         if ok && !isConnected {
             isConnected = true
             reconnectDelay = .seconds(2)  // Reset backoff on success
-            logger.info("OpenClaw gateway authenticated")
-            startPingTimer()
+            logger.info("OpenClaw gateway authenticated (conn \(connectionId))")
+            lastPongAt = Date()
+            startPingTimer(connId: connectionId)
             if let cont = connectContinuation {
                 connectContinuation = nil
                 cont.resume()
@@ -356,12 +378,21 @@ actor OpenClawHTTPClient {
 
     // MARK: - Keepalive
 
-    private func startPingTimer() {
+    private func startPingTimer(connId: UInt64) {
         Task {
-            while isConnected, let ws, !ws.isClosed {
-                try? await Task.sleep(for: .seconds(30))
-                guard isConnected, !ws.isClosed else { break }
+            while connId == self.connectionId, isConnected, let ws, !ws.isClosed {
+                try? await Task.sleep(for: .seconds(15))
+                guard connId == self.connectionId, isConnected, !ws.isClosed else { break }
                 try? await ws.sendPing()
+
+                // Wait then check if pong arrived
+                try? await Task.sleep(for: .seconds(10))
+                guard connId == self.connectionId else { break }
+                if Date().timeIntervalSince(lastPongAt) > 25 {
+                    logger.warning("No pong received in 25s — forcing reconnect (conn \(connId))")
+                    ws.close(code: .goingAway).whenComplete { _ in }
+                    break  // onClose will trigger handleDisconnect
+                }
             }
         }
     }
