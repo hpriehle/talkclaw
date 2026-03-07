@@ -5,7 +5,7 @@ import SharedModels
 struct WidgetServeController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let w = routes.grouped("w")
-        let protected = w.grouped(WidgetCookieMiddleware())
+        let protected = w.grouped(WidgetTokenMiddleware())
         protected.get(":slug", use: serve)
         protected.on(.GET, ":slug", "**", use: proxyRoute)
         protected.on(.POST, ":slug", "**", use: proxyRoute)

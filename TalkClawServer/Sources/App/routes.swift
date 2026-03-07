@@ -16,7 +16,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: DashboardController())
     try protected.register(collection: WidgetSessionController())
 
-    // Widget serving (cookie auth via tc_widget_session)
+    // Widget serving (token query param auth)
     try app.register(collection: WidgetServeController())
 
     // WebSocket (bearer token via query param)

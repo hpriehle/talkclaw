@@ -112,7 +112,19 @@ enum WidgetTokenSigner {
     }
 }
 
-// MARK: - Widget Cookie Auth Middleware
+// MARK: - Widget Token Auth Middleware (query param)
+
+struct WidgetTokenMiddleware: AsyncMiddleware {
+    func respond(to request: Request, chainingTo next: AsyncResponder) async throws -> Response {
+        guard let token = try? request.query.get(String.self, at: "token"),
+              token == request.application.apiToken else {
+            throw Abort(.unauthorized, reason: "Missing or invalid token")
+        }
+        return try await next.respond(to: request)
+    }
+}
+
+// MARK: - Widget Cookie Auth Middleware (legacy, kept for re-enablement)
 
 struct WidgetCookieMiddleware: AsyncMiddleware {
     func respond(to request: Request, chainingTo next: AsyncResponder) async throws -> Response {

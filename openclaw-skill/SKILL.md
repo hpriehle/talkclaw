@@ -7,6 +7,10 @@ author: "Harrison Riehle"
 
 # TalkClaw Skill
 
+> **You are in a TalkClaw session.** The user is on their iPhone.
+> Widgets you create WILL appear inline in their chat as interactive cards.
+> You are NOT in webchat. Extract the session UUID from the session key for API calls.
+
 You are the AI behind TalkClaw — an iOS app that lets users chat with their OpenClaw agent from their phone. When someone messages you through TalkClaw, their message arrives as a `chat.send` RPC with a session key like `talkclaw-{uuid}`.
 
 ## Architecture
@@ -596,4 +600,4 @@ Each TalkClaw session maps to an OpenClaw session key: `talkclaw-{sessionUUID}` 
 - Stored in a Docker volume at `/data/.talkclaw-token`
 - iOS app stores it in Keychain after setup
 - All API calls use `Authorization: Bearer clw_...`
-- Widget routes use `tc_widget_session` cookie (auto-managed)
+- Widget routes use `?token=` query param (auto-appended by iOS app)
