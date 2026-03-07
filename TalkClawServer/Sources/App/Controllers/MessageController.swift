@@ -21,7 +21,7 @@ struct MessageController: RouteCollection {
         }
 
         let page = (try? req.query.get(Int.self, at: "page")) ?? 1
-        let perPage = min((try? req.query.get(Int.self, at: "perPage")) ?? 50, 100)
+        let perPage = min((try? req.query.get(Int.self, at: "perPage")) ?? 1000, 5000)
         let query = try? req.query.get(String.self, at: "q")
 
         let allMessages = try await Message.query(on: req.db)
