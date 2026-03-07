@@ -67,6 +67,10 @@ actor OpenClawHTTPClient {
         let sessionKey = "talkclaw-\(sessionId.uuidString)"
         let messageId = UUID()
 
+        // Auto-subscribe all connected iOS clients to this session.
+        // This ensures responses reach the app even if client-side subscribe failed.
+        clientManager.subscribeAll(to: sessionId)
+
         logger.info("Sending chat: sessionId=\(sessionId), sessionKey=\(sessionKey)")
 
         do {

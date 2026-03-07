@@ -32,6 +32,20 @@ final class ClientWSManager: Sendable {
         }
     }
 
+    /// Subscribe ALL connected clients to a session (single-user system).
+    /// Called when the server processes a REST-initiated chat, ensuring
+    /// responses reach the iOS app even if client-side subscribe failed.
+    func subscribeAll(to sessionId: UUID) {
+        let allIds = connections.withLockedValue { Array($0.keys) }
+        subscriptions.withLockedValue { subs in
+            for connId in allIds {
+                var set = subs[connId] ?? []
+                set.insert(sessionId)
+                subs[connId] = set
+            }
+        }
+    }
+
     /// Send a message only to connections subscribed to the given session.
     func sendToSession(_ message: WSMessage, sessionId: UUID, logger: Logger? = nil) async {
         let encoder = JSONEncoder()
