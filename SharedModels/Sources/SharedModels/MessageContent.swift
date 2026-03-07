@@ -95,14 +95,31 @@ public enum MessageContent: Codable, Sendable, Hashable {
     /// Short preview text for notification/list display.
     public var previewText: String {
         switch self {
-        case .text(let t): return t
+        case .text(let t): return t.strippingMarkdown
         case .code(let lang, _): return "[\(lang) code]"
         case .image(_, let caption): return caption ?? "[Image]"
         case .file(let name, _, _): return "[\(name)]"
         case .system(let t): return t
         case .error(let t): return "Error: \(t)"
-        case .widget(let p): return "[Widget: \(p.title)]"
+        case .widget(let p): return "\(p.title) Widget"
         }
+    }
+}
+
+// MARK: - Markdown Stripping
+
+extension String {
+    /// Strips common markdown formatting for plain-text preview display.
+    var strippingMarkdown: String {
+        var s = self
+        s = s.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\*{1,3}(.+?)\\*{1,3}", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "_{1,3}(.+?)_{1,3}", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "~~(.+?)~~", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "`(.+?)`", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\[(.+?)\\]\\(.+?\\)", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "(?m)^[\\-\\*]\\s+", with: "", options: .regularExpression)
+        return s
     }
 }
 

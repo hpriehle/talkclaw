@@ -26,7 +26,10 @@ struct SessionController: RouteCollection {
                 .filter(\.$session.$id == session.id!)
                 .sort(\.$createdAt, .descending)
                 .first()
-            let preview = lastMessage?.textContent.map { String($0.prefix(100)) }
+            let preview: String? = try lastMessage.map { msg in
+                let content = try JSONDecoder().decode(MessageContent.self, from: msg.contentJSON)
+                return String(content.previewText.prefix(100))
+            }
             dtos.append(session.toDTO(lastMessagePreview: preview))
         }
         return dtos
