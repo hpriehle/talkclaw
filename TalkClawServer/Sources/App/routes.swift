@@ -6,9 +6,6 @@ func routes(_ app: Application) throws {
     // Health (public)
     try api.register(collection: HealthController())
 
-    // OpenClaw webhook (authenticated by webhook secret, not API token)
-    try api.register(collection: OpenClawWebhookController())
-
     // Protected routes (bearer token)
     let protected = api.grouped(BearerTokenMiddleware())
     try protected.register(collection: SessionController())

@@ -71,11 +71,20 @@ final class ClientWSHandler {
                     try await session.save(on: db)
                 }
 
-                // Forward to AI backend via channel
-                try await channelClient.sendToChannel(
-                    sessionId: payload.sessionId,
-                    content: payload.content
-                )
+                // Forward to AI — streaming response delivered via WS by sendChat
+                let mgr = manager
+                let database = db
+                let client = channelClient
+                let sid = payload.sessionId
+                let text = payload.content
+                Task {
+                    await client.sendChat(
+                        sessionId: sid,
+                        content: text,
+                        manager: mgr,
+                        db: database
+                    )
+                }
             } catch {
                 logger.error("Error handling sendChat: \(error)")
                 await manager.send(.error(.init(code: 500, message: error.localizedDescription)), to: connectionId)

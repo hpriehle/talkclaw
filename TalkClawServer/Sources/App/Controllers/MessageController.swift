@@ -136,23 +136,17 @@ struct MessageController: RouteCollection {
             let dto = try message.toDTO()
             await manager.sendToSession(.chatComplete(dto), sessionId: sessionId, logger: req.logger)
         } else {
-            // Normal user message — forward to AI
+            // Normal user message — forward to AI (streaming response handled by sendChat)
             let channelClient = req.application.channelClient
             manager.subscribeAll(to: sessionId)
+            let db = req.db
             Task {
-                do {
-                    try await channelClient.sendToChannel(
-                        sessionId: sessionId,
-                        content: sendReq.content
-                    )
-                } catch {
-                    req.logger.error("Failed to send to channel: \(error)")
-                    await manager.sendToSession(
-                        .error(.init(code: 500, message: "Failed to reach AI: \(error.localizedDescription)")),
-                        sessionId: sessionId,
-                        logger: req.logger
-                    )
-                }
+                await channelClient.sendChat(
+                    sessionId: sessionId,
+                    content: sendReq.content,
+                    manager: manager,
+                    db: db
+                )
             }
         }
 
