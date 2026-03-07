@@ -1443,8 +1443,6 @@ async function cleanupOldPins() {
 **When Offline:**
 ```
 ┌─────────────────────────────┐
-│ ⚠️ Offline Mode             │  ← Status banner
-├─────────────────────────────┤
 │ Your message                │
 │ [Pending... 🔄]             │  ← Queued indicator
 ├─────────────────────────────┤
@@ -1455,10 +1453,10 @@ async function cleanupOldPins() {
 **When Connection Returns:**
 ```
 ┌─────────────────────────────┐
-│ ✅ Back Online - Sending... │  ← Auto-send notification
-├─────────────────────────────┤
 │ Your message                │
 │ [Sent ✓]                    │  ← Status updated
+├─────────────────────────────┤
+│ Agent: Previous message     │
 └─────────────────────────────┘
 ```
 
@@ -1706,13 +1704,6 @@ func resolveConflict(_ localMessage: Message, _ serverMessage: Message) {
 ```
 
 ### UI/UX Details
-
-**Offline Banner:**
-- Top of screen
-- Yellow/orange background
-- "⚠️ Offline Mode" text
-- Dismissible after 3 seconds
-- Reappears if user tries to send
 
 **Message Status Icons:**
 ```
