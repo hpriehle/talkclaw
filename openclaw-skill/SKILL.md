@@ -26,6 +26,22 @@ Every `chat.send` includes a `context` object:
 ```
 Use `context.channel === 'talkclaw'` to detect TalkClaw sessions programmatically.
 
+### Widget Inventory
+
+Every webhook payload includes a `widgets` array — the **complete list of existing widgets**:
+```json
+{
+  "sessionId": "...",
+  "content": "...",
+  "widgets": [
+    { "slug": "tasks", "title": "Tasks", "description": "...", "surface": "inline", "version": 3, "createdBySession": "uuid" },
+    { "slug": "clock-t6ym0o", "title": "Clock", "description": "...", "surface": "dashboard", "version": 1 }
+  ]
+}
+```
+
+**IMPORTANT:** Always check `widgets` before creating a new widget. If a widget with similar functionality already exists, **update it** (`PATCH /api/v1/widgets/{slug}`) instead of creating a duplicate. Use the `slug` to reference existing widgets.
+
 ## Platform Capabilities
 
 When you detect `context.channel === 'talkclaw'`, these capabilities are available:

@@ -27,11 +27,17 @@ struct OpenClawChannelClient: Sendable {
             return
         }
 
-        let payload: [String: Any] = [
+        // Build widget inventory for agent context
+        let widgetInventory = await buildWidgetInventory(db: db)
+
+        var payload: [String: Any] = [
             "sessionId": sessionId.uuidString.lowercased(),
             "content": content,
             "secret": webhookSecret
         ]
+        if !widgetInventory.isEmpty {
+            payload["widgets"] = widgetInventory
+        }
         guard let bodyData = try? JSONSerialization.data(withJSONObject: payload) else {
             logger.error("Failed to serialize webhook payload")
             return
@@ -65,6 +71,25 @@ struct OpenClawChannelClient: Sendable {
                 .error(.init(code: 500, message: "Failed to send message to AI: \(error.localizedDescription)")),
                 sessionId: sessionId, logger: logger
             )
+        }
+    }
+
+    /// Build a lightweight widget inventory for the agent context.
+    private func buildWidgetInventory(db: Database) async -> [[String: Any]] {
+        guard let widgets = try? await Widget.query(on: db).all() else { return [] }
+        return widgets.compactMap { widget -> [String: Any]? in
+            guard let id = widget.id else { return nil }
+            var entry: [String: Any] = [
+                "slug": widget.slug,
+                "title": widget.title,
+                "description": widget.description,
+                "surface": widget.surface,
+                "version": widget.version
+            ]
+            if let sessionId = widget.createdBySession {
+                entry["createdBySession"] = sessionId.uuidString.lowercased()
+            }
+            return entry
         }
     }
 
