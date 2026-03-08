@@ -2334,3 +2334,96 @@ Content-Type: application/json
 **Last Updated:** 2026-03-08 00:10 UTC  
 **Addition:** Widget Marketplace expansion plan (44 new widgets)  
 **Status:** Planning Complete - Ready for Implementation
+
+---
+
+## 7. Lock Screen Widget - AI Status & Unread Messages
+
+### Overview
+
+**iPhone lock screen widget showing real-time AI activity and message counts.**
+
+**Goal:** Glanceable AI status without unlocking phone - know when AI is working and if there are unread messages.
+
+### Widget Display
+
+**Small Widget:**
+- AI Active indicator (animated pulsing dot)
+- Processing status text
+- Unread message count with badge
+
+**Minimal Widget:**
+- Compact: AI icon + unread count
+
+### Status Indicators
+
+**AI Status:**
+- Idle - No active tasks
+- Processing - AI currently working  
+- Complete - Task just finished
+- Sleeping - Offline/inactive
+
+**Message Count:**
+- Unread count with badge
+- Color coding (blue normal, red urgent)
+- Checkmark if zero unread
+
+### Data Updates
+
+**Live Activity Integration:**
+- Real-time AI task progress
+- Push notification updates
+- Battery-efficient background refresh
+
+**Update frequency:**
+- AI status: Real-time via push
+- Unread count: Every 5-10 seconds
+- Smart refresh when screen on
+
+### Widget Sizes (iOS 16+)
+
+**Circular (Lock Screen):**
+- Icon + badge count
+- Color-coded status ring
+- Tap to open app
+
+**Rectangular (Lock Screen):**
+- AI status text
+- Unread message count
+- Last activity timestamp
+
+**Inline (Lock Screen):**
+- Compact emoji indicators
+- Minimal battery usage
+
+### API Endpoints Required
+
+**GET /api/v1/status**
+- ai_active, current_task, progress
+- estimated_completion
+
+**GET /api/v1/messages/unread/count**
+- count, has_urgent, last_message_time
+
+### Implementation Priority
+
+**Phase 1 (MVP):**
+- Unread message count
+- AI active/idle status  
+- Basic tap to open
+
+**Phase 2:**
+- Progress indicator
+- Live Activities integration
+- Multiple widget sizes
+
+**Phase 3:**
+- Long-press quick actions
+- Customization options
+- Privacy modes
+
+---
+
+**Added:** 2026-03-08 02:20 UTC  
+**Section:** Lock Screen Widget - AI Status & Unread Messages  
+**Status:** Design Spec Complete
