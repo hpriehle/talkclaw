@@ -61,6 +61,7 @@ func configure(_ app: Application) throws {
     let channelClient = OpenClawChannelClient(
         baseURL: Environment.get("OPENCLAW_URL") ?? "",
         token: Environment.get("OPENCLAW_TOKEN") ?? "",
+        webhookSecret: Environment.get("OPENCLAW_WEBHOOK_SECRET") ?? "",
         logger: app.logger,
         httpClient: app.http.client.shared
     )

@@ -9,11 +9,13 @@ import NIOHTTP1
 struct OpenClawChannelClient: Sendable {
     let baseURL: String
     let token: String
+    let webhookSecret: String
     let logger: Logger
     let httpClient: HTTPClient
 
-    /// Sends a user message to the OpenClaw gateway and streams the response
-    /// back to iOS clients via WebSocket in real time.
+    /// Sends a user message to the OpenClaw gateway webhook.
+    /// The response comes back asynchronously via POST /api/v1/sessions/{id}/messages
+    /// from the OpenClaw TalkClaw channel plugin.
     func sendChat(
         sessionId: UUID,
         content: String,
@@ -25,31 +27,26 @@ struct OpenClawChannelClient: Sendable {
             return
         }
 
-        let messageId = UUID()
-        let sessionKey = "talkclaw:dm:\(sessionId.uuidString.lowercased())"
-
-        let bodyJSON: [String: Any] = [
-            "model": "openclaw:main",
-            "messages": [["role": "user", "content": content]],
-            "stream": true
+        let payload: [String: Any] = [
+            "sessionId": sessionId.uuidString.lowercased(),
+            "content": content,
+            "secret": webhookSecret
         ]
-        guard let bodyData = try? JSONSerialization.data(withJSONObject: bodyJSON) else {
-            logger.error("Failed to serialize chat request body")
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: payload) else {
+            logger.error("Failed to serialize webhook payload")
             return
         }
 
         do {
-            var request = HTTPClientRequest(url: "\(baseURL)/v1/chat/completions")
+            var request = HTTPClientRequest(url: "\(baseURL)/webhook/talkclaw")
             request.method = .POST
-            request.headers.add(name: "Authorization", value: "Bearer \(token)")
             request.headers.add(name: "Content-Type", value: "application/json")
-            request.headers.add(name: "x-openclaw-session-key", value: sessionKey)
             request.body = .bytes(ByteBuffer(data: bodyData))
 
-            let response = try await httpClient.execute(request, timeout: .seconds(120))
+            let response = try await httpClient.execute(request, timeout: .seconds(30))
 
-            guard response.status == .ok else {
-                logger.error("OpenClaw returned HTTP \(response.status.code)")
+            guard (200..<300).contains(Int(response.status.code)) else {
+                logger.error("OpenClaw webhook returned HTTP \(response.status.code)")
                 await manager.sendToSession(
                     .error(.init(code: Int(response.status.code), message: "AI backend returned HTTP \(response.status.code)")),
                     sessionId: sessionId, logger: logger
@@ -57,90 +54,15 @@ struct OpenClawChannelClient: Sendable {
                 return
             }
 
-            var accumulatedText = ""
-            var lineBuffer = ""
+            logger.info("Message sent to OpenClaw webhook for session \(sessionId)")
 
-            for try await buffer in response.body {
-                let chunk = String(buffer: buffer)
-                lineBuffer += chunk
-
-                // Process complete lines
-                while let newlineRange = lineBuffer.range(of: "\n") {
-                    let line = String(lineBuffer[lineBuffer.startIndex..<newlineRange.lowerBound])
-                    lineBuffer = String(lineBuffer[newlineRange.upperBound...])
-
-                    guard line.hasPrefix("data: ") else { continue }
-                    let payload = String(line.dropFirst(6))
-
-                    if payload == "[DONE]" {
-                        break
-                    }
-
-                    guard let data = payload.data(using: .utf8),
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let choices = json["choices"] as? [[String: Any]],
-                          let delta = choices.first?["delta"] as? [String: Any],
-                          let deltaContent = delta["content"] as? String else {
-                        continue
-                    }
-
-                    accumulatedText += deltaContent
-
-                    let deltaPayload = WSMessage.ChatDeltaPayload(
-                        sessionId: sessionId,
-                        delta: deltaContent,
-                        messageId: messageId
-                    )
-                    await manager.sendToSession(
-                        .chatDelta(deltaPayload),
-                        sessionId: sessionId, logger: logger
-                    )
-                }
-            }
-
-            // Process any remaining data in buffer
-            if !lineBuffer.isEmpty && lineBuffer.hasPrefix("data: ") {
-                let payload = String(lineBuffer.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if payload != "[DONE]",
-                   let data = payload.data(using: .utf8),
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let delta = choices.first?["delta"] as? [String: Any],
-                   let deltaContent = delta["content"] as? String {
-                    accumulatedText += deltaContent
-                }
-            }
-
-            guard !accumulatedText.isEmpty else {
-                logger.warning("OpenClaw returned empty response for session \(sessionId)")
-                return
-            }
-
-            let message = try Message(
-                id: messageId,
-                sessionId: sessionId,
-                role: .assistant,
-                content: .text(accumulatedText)
-            )
-            try await message.save(on: db)
-
-            if let session = try await Session.find(sessionId, on: db) {
-                session.lastMessageAt = Date()
-                try await session.save(on: db)
-            }
-
-            let dto = try message.toDTO()
-            await manager.sendToSession(
-                .chatComplete(dto),
-                sessionId: sessionId, logger: logger
-            )
-
+            // Auto-title the session from the first user message
             try? await autoTitleIfNeeded(sessionId: sessionId, db: db, manager: manager)
 
         } catch {
-            logger.error("OpenClaw streaming error: \(error)")
+            logger.error("OpenClaw webhook error: \(error)")
             await manager.sendToSession(
-                .error(.init(code: 500, message: "AI streaming failed: \(error.localizedDescription)")),
+                .error(.init(code: 500, message: "Failed to send message to AI: \(error.localizedDescription)")),
                 sessionId: sessionId, logger: logger
             )
         }

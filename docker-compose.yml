@@ -7,6 +7,7 @@ services:
       - DATABASE_URL=postgres://talkclaw:talkclaw@db:5432/talkclaw
       - OPENCLAW_URL=${OPENCLAW_URL:-}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
+      - OPENCLAW_WEBHOOK_SECRET=${OPENCLAW_WEBHOOK_SECRET:-}
       - API_TOKEN=${API_TOKEN:-}
       - DATA_DIR=/data
       - SANDBOX_SOCKET=/sandbox/talkclaw-sandbox.sock
