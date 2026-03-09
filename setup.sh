@@ -285,7 +285,8 @@ ask_openclaw_details() {
 generate_secrets() {
     WEBHOOK_SECRET=$(openssl rand -hex 32)
     API_TOKEN="clw_$(openssl rand -hex 32)"
-    log "Generated webhook secret and API token"
+    BRIDGE_TOKEN="brg_$(openssl rand -hex 32)"
+    log "Generated webhook secret, API token, and bridge token"
 }
 
 # ── Step 4: Write .env File ───────────────────────────────────────────────
@@ -305,6 +306,9 @@ OPENCLAW_URL=${DOCKER_OPENCLAW_URL}
 OPENCLAW_TOKEN=${GATEWAY_TOKEN}
 OPENCLAW_WEBHOOK_SECRET=${WEBHOOK_SECRET}
 API_TOKEN=${API_TOKEN}
+BRIDGE_TOKEN=${BRIDGE_TOKEN}
+GOG_ACCOUNT=${GOG_ACCOUNT:-}
+GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD:-}
 ENVEOF
 
     log "Generated .env file"
@@ -352,7 +356,110 @@ deploy_talkclaw() {
     log "API token: ${API_TOKEN:0:20}..."
 }
 
-# ── Step 6: Install Channel Plugin ────────────────────────────────────────
+# ── Step 6: Install Data Bridge ───────────────────────────────────────────
+
+install_bridge() {
+    echo ""
+    echo -e "${BOLD}Data Bridge API${NC}"
+
+    local bridge_dir="$TALKCLAW_DIR/talkclaw-bridge"
+    if [[ ! -d "$bridge_dir" ]]; then
+        warn "Bridge directory not found at $bridge_dir. Skipping."
+        return
+    fi
+
+    if ! command -v node &>/dev/null; then
+        warn "Node.js not found. The data bridge requires Node.js."
+        echo "  Install Node.js (v18+) and re-run, or run manually:"
+        echo "  cd $bridge_dir && npm install && node src/index.js"
+        return
+    fi
+
+    log "Installing bridge dependencies..."
+    (cd "$bridge_dir" && npm install --silent 2>/dev/null)
+    log "Bridge dependencies installed"
+
+    # Install systemd user service
+    if command -v systemctl &>/dev/null; then
+        mkdir -p "$HOME/.config/systemd/user"
+        cp "$bridge_dir/talkclaw-bridge.service" "$HOME/.config/systemd/user/"
+        systemctl --user daemon-reload
+        systemctl --user enable --now talkclaw-bridge 2>/dev/null || true
+
+        # Health check
+        sleep 2
+        if curl -sf http://localhost:3847/api/health >/dev/null 2>&1; then
+            log "Data bridge running on port 3847"
+        else
+            warn "Bridge started but health check failed. Check: journalctl --user -u talkclaw-bridge"
+        fi
+    else
+        warn "systemd not available. Start the bridge manually:"
+        echo "  cd $bridge_dir && BRIDGE_TOKEN=\$BRIDGE_TOKEN node src/index.js"
+    fi
+}
+
+# ── Step 7: Configure Google Integration (optional) ──────────────────────
+
+ask_gog_details() {
+    if ! command -v gog &>/dev/null; then
+        log "gog CLI not found — skipping Google Calendar/Gmail integration"
+        echo "  Install gog (https://github.com/chrispassas/gog) to enable calendar/email widgets."
+        echo "  System stats widgets will still work without gog."
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}Google Integration (optional)${NC}"
+    echo "The data bridge can serve Google Calendar and Gmail data to widgets."
+    echo "This requires your gog account email and keyring password."
+    echo ""
+
+    ask "Configure Google integration? (Y/n) "
+    read -r reply
+    if [[ "$reply" =~ ^[Nn] ]]; then
+        log "Skipping Google integration. System stats bridge still works."
+        return
+    fi
+
+    ask "Google account email (for gog CLI): "
+    read -r GOG_ACCOUNT
+    if [[ -z "$GOG_ACCOUNT" ]]; then
+        warn "No account provided. Skipping."
+        return
+    fi
+
+    ask "gog keyring password: "
+    read -rs GOG_KEYRING_PASSWORD
+    echo ""
+
+    if [[ -z "$GOG_KEYRING_PASSWORD" ]]; then
+        warn "No keyring password provided. Calendar/mail endpoints will not work."
+        return
+    fi
+
+    # Update .env with GOG credentials
+    sed -i.bak "s/^GOG_ACCOUNT=.*/GOG_ACCOUNT=${GOG_ACCOUNT}/" "$TALKCLAW_DIR/.env" 2>/dev/null || \
+        sed -i '' "s/^GOG_ACCOUNT=.*/GOG_ACCOUNT=${GOG_ACCOUNT}/" "$TALKCLAW_DIR/.env" 2>/dev/null
+    sed -i.bak "s/^GOG_KEYRING_PASSWORD=.*/GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}/" "$TALKCLAW_DIR/.env" 2>/dev/null || \
+        sed -i '' "s/^GOG_KEYRING_PASSWORD=.*/GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}/" "$TALKCLAW_DIR/.env" 2>/dev/null
+    rm -f "$TALKCLAW_DIR/.env.bak"
+
+    # Restart bridge to pick up new env
+    if command -v systemctl &>/dev/null; then
+        systemctl --user restart talkclaw-bridge 2>/dev/null || true
+    fi
+
+    # Test calendar access
+    sleep 1
+    if curl -sf -H "Authorization: Bearer ${BRIDGE_TOKEN}" http://localhost:3847/api/calendar/today >/dev/null 2>&1; then
+        log "Google Calendar integration working"
+    else
+        warn "Calendar test failed. Verify gog credentials with: GOG_ACCOUNT=$GOG_ACCOUNT GOG_KEYRING_PASSWORD=*** gog calendar events --today"
+    fi
+}
+
+# ── Step 8: Install Channel Plugin ─ ────────────────────────────────────────
 
 install_channel_plugin() {
     echo ""
@@ -410,7 +517,7 @@ install_channel_plugin() {
     fi
 }
 
-# ── Step 7: Register Channel in OpenClaw Config ──────────────────────────
+# ── Step 9: Register Channel in OpenClaw Config ──────────────────────────
 
 register_channel() {
     local config_file="$HOME/.openclaw/openclaw.json"
@@ -455,7 +562,7 @@ register_channel() {
     log "Registered talkclaw channel in $config_file"
 }
 
-# ── Step 8: Cloudflare Tunnel ─────────────────────────────────────────────
+# ── Step 10: Cloudflare Tunnel ─────────────────────────────────────────────
 
 setup_tunnel() {
     echo ""
@@ -594,7 +701,7 @@ CFEOF
     log "Cloudflare Tunnel running: $SERVER_URL"
 }
 
-# ── Step 9: Install OpenClaw Skill ────────────────────────────────────────
+# ── Step 11: Install OpenClaw Skill ────────────────────────────────────────
 
 install_openclaw_skill() {
     echo ""
@@ -682,7 +789,7 @@ TOOLSEOF
     log "Updated $tools_file with TalkClaw connection details"
 }
 
-# ── Step 10: Print Connection Details + QR Code ──────────────────────────
+# ── Step 12: Print Connection Details + QR Code ──────────────────────────
 
 install_qrencode() {
     if command -v qrencode &>/dev/null; then return 0; fi
@@ -716,8 +823,13 @@ print_connection_details() {
     echo -e "${BOLD}║             TalkClaw Setup Complete!                     ║${NC}"
     echo -e "${BOLD}╠══════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BOLD}║${NC}                                                          ${BOLD}║${NC}"
-    echo -e "${BOLD}║${NC}  ${GREEN}Server URL:${NC}  ${server}"
-    echo -e "${BOLD}║${NC}  ${GREEN}API Token:${NC}   ${token}"
+    echo -e "${BOLD}║${NC}  ${GREEN}Server URL:${NC}   ${server}"
+    echo -e "${BOLD}║${NC}  ${GREEN}API Token:${NC}    ${token}"
+    if curl -sf http://localhost:3847/api/health >/dev/null 2>&1; then
+    echo -e "${BOLD}║${NC}  ${GREEN}Data Bridge:${NC}  http://localhost:3847 (running)"
+    else
+    echo -e "${BOLD}║${NC}  ${YELLOW}Data Bridge:${NC}  not running"
+    fi
     echo -e "${BOLD}║${NC}                                                          ${BOLD}║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
 
@@ -763,6 +875,9 @@ main() {
     GATEWAY_TOKEN=""
     OPENCLAW_URL=""
     WEBHOOK_SECRET=""
+    BRIDGE_TOKEN=""
+    GOG_ACCOUNT=""
+    GOG_KEYRING_PASSWORD=""
     OPENCLAW_WORKSPACE=""
     OPENCLAW_EXTENSIONS=""
 
@@ -774,6 +889,8 @@ main() {
     install_docker
     check_ports
     deploy_talkclaw
+    install_bridge
+    ask_gog_details
     install_channel_plugin
     register_channel
     setup_tunnel
