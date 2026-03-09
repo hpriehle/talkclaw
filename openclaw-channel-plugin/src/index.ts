@@ -28,7 +28,7 @@ export default function register(api: any) {
       "The user is chatting via TalkClaw, a self-hosted iOS chat app with a widget engine for interactive dashboards.",
 
     webhookHandler: async (req: any, res: any) => {
-      const { sessionId, content, secret } = req.body;
+      const { sessionId, content, secret, apiToken: inboundApiToken, widgets } = req.body;
 
       // Verify webhook secret
       if (webhookSecret && secret !== webhookSecret) {
@@ -50,6 +50,9 @@ export default function register(api: any) {
       res.status(204).end();
 
       // Dispatch through the agent
+      // Use the inbound token if provided, otherwise fall back to config
+      const effectiveToken = inboundApiToken || apiToken;
+
       try {
         await api.dispatchReplyWithBufferedBlockDispatcher({
           channel: "talkclaw",
@@ -57,6 +60,11 @@ export default function register(api: any) {
           userId: `talkclaw:user:${sessionId}`,
           content,
           dmPolicy: config.dmPolicy || "open",
+          context: {
+            apiToken: effectiveToken,
+            serverUrl: serverUrl,
+            widgets: widgets || [],
+          },
           deliver: async (reply: any) => {
             const replyText = reply.text || "";
             if (!replyText.trim()) return;

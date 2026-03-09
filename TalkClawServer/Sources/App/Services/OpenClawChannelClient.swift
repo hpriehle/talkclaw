@@ -10,6 +10,7 @@ struct OpenClawChannelClient: Sendable {
     let baseURL: String
     let token: String
     let webhookSecret: String
+    let apiToken: String
     let logger: Logger
     let httpClient: HTTPClient
 
@@ -33,7 +34,8 @@ struct OpenClawChannelClient: Sendable {
         var payload: [String: Any] = [
             "sessionId": sessionId.uuidString.lowercased(),
             "content": content,
-            "secret": webhookSecret
+            "secret": webhookSecret,
+            "apiToken": apiToken
         ]
         if !widgetInventory.isEmpty {
             payload["widgets"] = widgetInventory
@@ -78,7 +80,7 @@ struct OpenClawChannelClient: Sendable {
     private func buildWidgetInventory(db: Database) async -> [[String: Any]] {
         guard let widgets = try? await Widget.query(on: db).all() else { return [] }
         return widgets.compactMap { widget -> [String: Any]? in
-            guard let id = widget.id else { return nil }
+            guard widget.id != nil else { return nil }
             var entry: [String: Any] = [
                 "slug": widget.slug,
                 "title": widget.title,

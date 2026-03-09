@@ -26,13 +26,15 @@ Every `chat.send` includes a `context` object:
 ```
 Use `context.channel === 'talkclaw'` to detect TalkClaw sessions programmatically.
 
-### Widget Inventory
+### Webhook Context
 
-Every webhook payload includes a `widgets` array — the **complete list of existing widgets**:
+Every webhook payload includes context data passed through to your `context` object:
+
 ```json
 {
-  "sessionId": "...",
-  "content": "...",
+  "sessionId": "uuid",
+  "content": "user message",
+  "apiToken": "clw_...",
   "widgets": [
     { "slug": "tasks", "title": "Tasks", "description": "...", "surface": "inline", "version": 3, "createdBySession": "uuid" },
     { "slug": "clock-t6ym0o", "title": "Clock", "description": "...", "surface": "dashboard", "version": 1 }
@@ -40,7 +42,12 @@ Every webhook payload includes a `widgets` array — the **complete list of exis
 }
 ```
 
-**IMPORTANT:** Always check `widgets` before creating a new widget. If a widget with similar functionality already exists, **update it** (`PATCH /api/v1/widgets/{slug}`) instead of creating a duplicate. Use the `slug` to reference existing widgets.
+Available in your context:
+- **`context.apiToken`** — the TalkClaw API token. Use this for `Authorization: Bearer {apiToken}` on all API calls. Do NOT hardcode tokens.
+- **`context.serverUrl`** — the TalkClaw server URL (e.g., `https://clawapp.clntacq.com`)
+- **`context.widgets`** — complete list of existing widgets
+
+**IMPORTANT:** Always check `context.widgets` before creating a new widget. If a widget with similar functionality already exists, **update it** (`PATCH /api/v1/widgets/{slug}`) instead of creating a duplicate.
 
 ## Platform Capabilities
 
@@ -250,8 +257,8 @@ Render variables are NOT secrets. Anything requiring credentials must live in a 
 
 ## API Reference
 
-**Base URL:** `https://clawapp.clntacq.com`
-**Auth:** All `/api/v1/*` endpoints require `Authorization: Bearer clw_...`
+**Base URL:** Use `context.serverUrl` (e.g., `https://clawapp.clntacq.com`)
+**Auth:** All `/api/v1/*` endpoints require `Authorization: Bearer {context.apiToken}`
 
 ### Widget Lifecycle
 
@@ -292,6 +299,22 @@ You MUST include `sessionId` when creating a widget. This is how the widget appe
 5. The widget renders inline as a glass card with a WKWebView — the user sees and interacts with it immediately
 
 Without `sessionId`, the widget is created but **will NOT appear in any chat**. It will only be accessible via the dashboard (if pinned) or direct URL.
+
+### Widget Creation Checklist
+
+Before calling `POST /api/v1/widgets`:
+1. Check `context.widgets` — does a similar widget already exist? If so, `PATCH` it instead
+2. Extract session UUID from session key: `talkclaw:dm:{uuid}` → `{uuid}`
+3. Use `context.apiToken` for the `Authorization: Bearer` header
+4. Include `sessionId` in the POST body (or widget won't appear in chat)
+5. **Check the HTTP response** — if not 2xx, the widget was NOT created. Log the error and tell the user.
+
+### If the Widget Doesn't Appear
+
+- The `POST /api/v1/widgets` response was not 2xx — check the error message
+- `sessionId` was missing or not a valid UUID
+- `Authorization` header was wrong or missing (use `context.apiToken`)
+- The HTML was malformed (missing required sections)
 
 **Updating a widget (section-targeted):**
 ```json
@@ -542,6 +565,74 @@ ctx.env.get(key)              // Read WIDGET_* prefixed env vars
   "handler": "const rows = await ctx.db.query('SELECT content, created_at FROM messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 10', [req.query.sessionId]); return { status: 200, json: rows };"
 }
 ```
+
+---
+
+## Data Access Patterns for Widget Routes
+
+### What the Sandbox CAN Access
+
+| Method | Use For | Notes |
+|--------|---------|-------|
+| `ctx.kv.get/set()` | Widget-owned data (todos, counters, settings) | Widget-scoped, no schema, instant |
+| `ctx.db.query()` | Structured/relational data | Same Postgres as TalkClaw, parameterized SQL |
+| `ctx.fetch()` | Public HTTP APIs (weather, stocks, RSS) | Must be publicly DNS-resolvable, 8s timeout |
+| `ctx.fetch('http://host.docker.internal:PORT/...')` | Services on the same machine | Home Assistant, n8n, Grafana, etc. |
+| `ctx.env.get()` | Config values | Only `WIDGET_*` prefixed env vars |
+
+### What the Sandbox CANNOT Access
+
+- **No filesystem** — `require('fs')` does not exist, `require()` is not available at all
+- **No `localhost`** — `localhost` and `127.0.0.1` refer to the sandbox Docker container, NOT the host machine
+- **No internal DNS** — domains like `reminders.clntacq.com` that only resolve on the host will fail from inside Docker
+- **No Node.js modules** — no `require()`, no `import`, no npm packages
+- **No `process.env`** — only `ctx.env.get(key)` with `WIDGET_` prefix
+
+### Recommended Data Patterns
+
+**Pattern 1: KV Store (simplest — for widget-owned data)**
+```javascript
+// Save data
+await ctx.kv.set('items', JSON.stringify([{ text: 'Buy milk', done: false }]));
+// Load data
+const items = JSON.parse(await ctx.kv.get('items') || '[]');
+return { status: 200, json: items };
+```
+
+**Pattern 2: PostgreSQL (for structured/relational data)**
+```javascript
+// Create table on first use (idempotent)
+await ctx.db.query(`CREATE TABLE IF NOT EXISTS widget_tasks (
+  id SERIAL PRIMARY KEY, text TEXT NOT NULL, done BOOLEAN DEFAULT false
+)`);
+const rows = await ctx.db.query('SELECT * FROM widget_tasks ORDER BY id');
+return { status: 200, json: rows };
+```
+
+**Pattern 3: Public API Fetch**
+```javascript
+const raw = await ctx.fetch('https://api.weatherapi.com/v1/current.json?key=xxx&q=Austin');
+const data = JSON.parse(raw);
+return { status: 200, json: { temp: data.current.temp_f } };
+```
+
+**Pattern 4: Host Services (Beelink local services)**
+```javascript
+// Use host.docker.internal, NEVER localhost
+const raw = await ctx.fetch('http://host.docker.internal:8123/api/states', {
+  headers: { 'Authorization': 'Bearer ha_token_here' }
+});
+return { status: 200, json: JSON.parse(raw) };
+```
+
+### Common Mistakes
+
+| Wrong | Right | Why |
+|-------|-------|-----|
+| `require('fs')` | `ctx.kv.set(key, data)` | No filesystem in sandbox |
+| `fetch('http://localhost:3100/...')` | `ctx.fetch('http://host.docker.internal:3100/...')` | localhost = sandbox container |
+| `fetch('http://reminders.clntacq.com/...')` | `ctx.fetch('http://host.docker.internal:PORT/...')` | Internal DNS not resolvable from Docker |
+| Hardcoded API token | Use `context.apiToken` from webhook | Token may change |
 
 ---
 
