@@ -95,4 +95,78 @@ export default function register(api: any) {
   });
 
   api.logger.info("TalkClaw channel plugin registered");
+
+  // ── Subagent spawning hooks ──────────────────────────────────────────
+  // Track childSessionKey → TalkClaw sessionId so subagent replies route
+  // to the correct session in the iOS app.
+  const subagentSessions = new Map<string, string>();
+
+  api.on("subagent_spawning", async (event: any) => {
+    if (!event.threadRequested) return;
+    if (event.requester?.channel !== "talkclaw") return;
+
+    // Create a new TalkClaw session for this subagent
+    try {
+      const res = await fetch(`${serverUrl}/api/v1/sessions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiToken}`,
+        },
+        body: JSON.stringify({
+          title: event.label || `Subagent: ${event.agentId}`,
+        }),
+      });
+
+      if (!res.ok) {
+        api.logger.error(
+          `TalkClaw: failed to create subagent session — HTTP ${res.status}`
+        );
+        return {
+          status: "error" as const,
+          error: `Failed to create TalkClaw session: HTTP ${res.status}`,
+        };
+      }
+
+      const session = await res.json();
+      const sessionId = session.id;
+      subagentSessions.set(event.childSessionKey, sessionId);
+
+      api.logger.info(
+        `TalkClaw: bound subagent ${event.childSessionKey} → session ${sessionId}`
+      );
+      return { status: "ok" as const, threadBindingReady: true };
+    } catch (err: any) {
+      api.logger.error(
+        `TalkClaw: subagent spawn error — ${err.message}`
+      );
+      return {
+        status: "error" as const,
+        error: `TalkClaw subagent spawn failed: ${err.message}`,
+      };
+    }
+  });
+
+  api.on("subagent_delivery_target", (event: any) => {
+    if (event.requesterOrigin?.channel !== "talkclaw") return;
+
+    const sessionId = subagentSessions.get(event.childSessionKey);
+    if (!sessionId) return;
+
+    return {
+      origin: {
+        channel: "talkclaw",
+        to: sessionId,
+      },
+    };
+  });
+
+  api.on("subagent_ended", (event: any) => {
+    if (subagentSessions.has(event.targetSessionKey)) {
+      api.logger.info(
+        `TalkClaw: cleaning up subagent binding for ${event.targetSessionKey}`
+      );
+      subagentSessions.delete(event.targetSessionKey);
+    }
+  });
 }
