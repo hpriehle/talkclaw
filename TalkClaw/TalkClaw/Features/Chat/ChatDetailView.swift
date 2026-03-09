@@ -34,13 +34,14 @@ struct ChatDetailView: View {
                 ScrollViewReader { proxy in
                     ZStack(alignment: .bottom) {
                         ScrollView {
-                            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                            LazyVStack(alignment: .leading, spacing: Theme.Spacing.md) {
                                 // Top inset so content starts below the floating header
                                 Color.clear.frame(height: isSearching ? 100 : 56)
 
                                 ForEach(messages) { message in
                                     MessageBubbleView(message: message)
                                         .id(message.id)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                         .overlay(
                                             searchMatchIds.contains(message.id)
                                                 ? RoundedRectangle(cornerRadius: Theme.Radius.md)
@@ -57,9 +58,11 @@ struct ChatDetailView: View {
                                 if isActive && !streamingText.isEmpty {
                                     StreamingBubbleView(text: streamingText)
                                         .id("streaming-bubble")
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 } else if isActive {
                                     StreamingIndicator()
                                         .id("streaming")
+                                        .transition(.opacity)
                                 }
 
                                 Color.clear.frame(height: 1).id("bottom-anchor")
@@ -98,7 +101,7 @@ struct ChatDetailView: View {
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(Theme.Colors.textPrimary)
                                     .frame(width: 36, height: 36)
-                                    .background(.ultraThinMaterial, in: Circle())
+                                    .interactiveGlass(in: Circle())
                             }
                             .padding(.bottom, Theme.Spacing.sm)
                             .transition(.scale.combined(with: .opacity))
@@ -174,7 +177,9 @@ struct ChatDetailView: View {
             flushTask?.cancel()
             streamingText = ""
             deltaBuffer = ""
-            messages.append(message)
+            withAnimation(Theme.Anim.spring) {
+                messages.append(message)
+            }
             if hapticsEnabled {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             }
@@ -234,7 +239,7 @@ struct ChatDetailView: View {
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = false) {
         if animated {
-            withAnimation {
+            withAnimation(Theme.Anim.spring) {
                 proxy.scrollTo("bottom-anchor", anchor: .bottom)
             }
         } else {
@@ -377,8 +382,8 @@ struct ChatHeaderOverlay: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Colors.textPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.vertical, Theme.Spacing.sm)
                     .interactiveGlass()
             }
 
@@ -393,8 +398,8 @@ struct ChatHeaderOverlay: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.Colors.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.sm)
                         .interactiveGlass()
                 }
             } else {
@@ -426,7 +431,7 @@ struct AgentStatusPill: View {
             Circle()
                 .fill(isActive ? Theme.Colors.success : Theme.Colors.textTertiary)
                 .frame(width: 8, height: 8)
-                .scaleEffect(isActive && pulsing ? 1.4 : 1.0)
+                .scaleEffect(isActive && pulsing ? 1.3 : 1.0)
                 .animation(
                     isActive
                         ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
@@ -438,8 +443,8 @@ struct AgentStatusPill: View {
                 .font(Theme.Typography.subhead)
                 .foregroundStyle(isActive ? Theme.Colors.success : Theme.Colors.textSecondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.sm)
         .interactiveGlass()
         .animation(Theme.Anim.smooth, value: isActive)
         .onChange(of: isActive) { _, active in
@@ -522,8 +527,8 @@ struct ChatSearchBar: View {
                         .fixedSize()
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, Theme.Spacing.sm)
+            .padding(.vertical, Theme.Spacing.sm)
             .interactiveGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
 
             if !text.isEmpty {

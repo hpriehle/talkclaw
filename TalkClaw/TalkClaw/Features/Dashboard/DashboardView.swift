@@ -59,7 +59,7 @@ struct DashboardView: View {
             .onReceive(NotificationCenter.default.publisher(for: .widgetInjected)) { _ in
                 Task { await loadDashboard() }
             }
-            .alert("Error", isPresented: .init(
+            .alert("Dashboard Failed to Load", isPresented: .init(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
             )) {

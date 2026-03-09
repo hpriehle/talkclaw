@@ -89,13 +89,10 @@ struct MessageController: RouteCollection {
 
         // Save attachment messages (user messages only)
         if messageRole == .user {
-            let baseURL = req.application.http.server.configuration.hostname == "0.0.0.0"
-                ? "http://localhost:\(req.application.http.server.configuration.port)"
-                : "http://\(req.application.http.server.configuration.hostname):\(req.application.http.server.configuration.port)"
-
             if let attachments = sendReq.attachments {
                 for att in attachments {
-                    let fileURL = URL(string: "\(baseURL)/api/v1/files/\(att.serverPath)")!
+                    // Store relative path — client constructs full URL with auth
+                    let fileURL = URL(string: "/api/v1/files/\(att.serverPath)")!
                     if att.mimeType.hasPrefix("image/") {
                         let imgMsg = try Message(
                             sessionId: sessionId,
