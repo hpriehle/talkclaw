@@ -4,6 +4,8 @@ livekit-agents[openai,silero]~=1.4
 # Open-source alternatives (FREE!)
 groq~=1.1.2              # Groq Whisper API (replaces Deepgram)
 piper-tts~=1.4.1         # Piper TTS (replaces ElevenLabs)
+pathvalidate~=3.3.1      # Required by piper-tts
+onnxruntime~=1.24.0      # Required by piper-tts
 
 # Utilities
 httpx~=0.27.0
