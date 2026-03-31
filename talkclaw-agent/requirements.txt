@@ -1,3 +1,10 @@
-livekit-agents[openai,deepgram,elevenlabs,silero]~=1.4
+# LiveKit Agents (with open-source alternatives)
+livekit-agents[openai,silero]~=1.4
+
+# Open-source alternatives (FREE!)
+groq~=1.1.2              # Groq Whisper API (replaces Deepgram)
+piper-tts~=1.4.1         # Piper TTS (replaces ElevenLabs)
+
+# Utilities
 httpx~=0.27.0
 python-dotenv~=1.0.0

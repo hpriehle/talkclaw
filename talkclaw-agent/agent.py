@@ -12,7 +12,12 @@ from livekit.agents import (
     JobContext,
     cli,
 )
-from livekit.plugins import silero, deepgram, elevenlabs
+from livekit.plugins import silero
+# Using open-source alternatives:
+# - Groq Whisper API (FREE) instead of Deepgram
+# - Piper TTS (FREE, CPU-only) instead of ElevenLabs
+from groq_stt import GroqSTT
+from piper_tts import PiperTTS
 from openclaw_llm import OpenClawLLM
 
 
