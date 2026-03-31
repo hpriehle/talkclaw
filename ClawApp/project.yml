@@ -1,0 +1,33 @@
+name: ClawApp
+options:
+  bundleIdPrefix: com.clawapp
+  deploymentTarget:
+    iOS: "18.5"
+
+packages:
+  SharedModels:
+    path: ../SharedModels
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    from: 2.0.17
+
+targets:
+  ClawApp:
+    type: application
+    platform: iOS
+    sources:
+      - ClawApp
+    dependencies:
+      - package: SharedModels
+      - package: LiveKit
+        product: LiveKit
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES

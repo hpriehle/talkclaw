@@ -10,6 +10,9 @@ struct MessageController: RouteCollection {
         messages.get(use: index)
         messages.post(use: create)
 
+        // Streaming delta endpoint (from talkclaw-agent sidecar)
+        routes.grouped("sessions", ":sessionId", "delta").post(use: receiveDelta)
+
         // Global search across all sessions
         routes.get("search", use: search)
     }
@@ -76,6 +79,37 @@ struct MessageController: RouteCollection {
         }
 
         return results
+    }
+
+    /// Receives streaming deltas from the talkclaw-agent sidecar and
+    /// broadcasts them to subscribed iOS clients via WebSocket.
+    @Sendable
+    func receiveDelta(req: Request) async throws -> HTTPStatus {
+        guard let sessionId: UUID = req.parameters.get("sessionId") else {
+            throw Abort(.badRequest, reason: "Missing session ID")
+        }
+
+        struct DeltaRequest: Content {
+            let delta: String
+            let messageId: String
+        }
+
+        let body = try req.content.decode(DeltaRequest.self)
+        guard let messageUUID = UUID(uuidString: body.messageId) else {
+            throw Abort(.badRequest, reason: "Invalid messageId UUID")
+        }
+
+        let manager = req.application.clientWSManager
+        manager.subscribeAll(to: sessionId)
+
+        let payload = WSMessage.ChatDeltaPayload(
+            sessionId: sessionId,
+            delta: body.delta,
+            messageId: messageUUID
+        )
+        await manager.sendToSession(.chatDelta(payload), sessionId: sessionId, logger: req.logger)
+
+        return .noContent
     }
 
     @Sendable

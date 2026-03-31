@@ -5,7 +5,7 @@ services:
       - "8080:8080"
     environment:
       - DATABASE_URL=postgres://talkclaw:talkclaw@db:5432/talkclaw
-      - OPENCLAW_URL=${OPENCLAW_URL:-}
+      - OPENCLAW_URL=${OPENCLAW_URL:-http://talkclaw-agent:3000}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
       - OPENCLAW_WEBHOOK_SECRET=${OPENCLAW_WEBHOOK_SECRET:-}
       - API_TOKEN=${API_TOKEN:-}
@@ -27,6 +27,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   sandbox:
     build: ./talkclaw-sandbox
@@ -42,6 +48,34 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /sandbox/talkclaw-sandbox.sock"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  talkclaw-agent:
+    build: ./talkclaw-agent
+    environment:
+      - WEBHOOK_SECRET=${OPENCLAW_WEBHOOK_SECRET:-}
+      - TALKCLAW_SERVER_URL=http://talkclaw:8080
+      - TALKCLAW_API_TOKEN=${API_TOKEN:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - ALLOWED_TELEGRAM_USERS=${ALLOWED_TELEGRAM_USERS:-}
+      - SESSIONS_DIR=/data/sessions
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - CONTEXT_DIR=/data/context
+    volumes:
+      - agent_sessions:/data/sessions
+      - ${CLAUDE_HOME:-/home/riehle/.claude}:/root/.claude
+      - ${CLAUDE_JSON:-/home/riehle/.claude.json}:/root/.claude.json
+      - ${OPENCLAW_WORKSPACE:-/home/riehle/.openclaw/workspace}:/data/context:rw
+      - /home/riehle/.ssh:/root/.ssh:ro
+    depends_on:
+      talkclaw:
+        condition: service_started
+    restart: unless-stopped
 
   db:
     image: postgres:16-alpine
@@ -51,6 +85,7 @@ services:
       - POSTGRES_PASSWORD=talkclaw
     volumes:
       - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U talkclaw"]
       interval: 5s
@@ -61,3 +96,4 @@ volumes:
   pg_data:
   app_data:
   sandbox_sock:
+  agent_sessions:

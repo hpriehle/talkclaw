@@ -1,14 +1,11 @@
 import Foundation
 import Combine
 import AVFoundation
+import LiveKit
 
-/// Manages LiveKit voice conversation
-/// 
-/// NOTE: This is a placeholder implementation.
-/// LiveKit Swift SDK will be added in next phase.
-/// For now, this provides the interface that UI components expect.
+/// Manages LiveKit voice conversation with OpenClaw
 @MainActor
-class LiveKitVoiceManager: ObservableObject {
+class LiveKitVoiceManager: NSObject, ObservableObject {
     // MARK: - Published Properties
     
     @Published var state: VoiceState = .idle
@@ -20,6 +17,7 @@ class LiveKitVoiceManager: ObservableObject {
     
     // MARK: - Private Properties
     
+    private var room: Room?
     private var sessionId: String?
     private var audioLevelTimer: Timer?
     
@@ -30,22 +28,43 @@ class LiveKitVoiceManager: ObservableObject {
         self.sessionId = sessionId
         state = .connecting
         
-        // TODO: Implement actual LiveKit connection
-        // This is a placeholder that simulates connection
-        
-        try? await Task.sleep(for: .seconds(1))
-        
-        isConnected = true
-        state = .idle
-        
-        print("[LiveKitVoiceManager] Connected to session: \(sessionId)")
+        do {
+            // Fetch LiveKit token from backend
+            let tokenResponse = try await fetchLiveKitToken(sessionId: sessionId)
+            
+            // Create room
+            let room = Room()
+            self.room = room
+            room.delegate = self
+            
+            // Connect to LiveKit server
+            try await room.connect(
+                url: tokenResponse.url,
+                token: tokenResponse.token
+            )
+            
+            // Enable microphone (but don't start publishing yet)
+            try await room.localParticipant?.setMicrophoneEnabled(false)
+            
+            isConnected = true
+            state = .idle
+            
+            print("[LiveKitVoiceManager] Connected to room: \(tokenResponse.roomName)")
+            
+        } catch {
+            print("[LiveKitVoiceManager] Connection error: \(error)")
+            self.error = error.localizedDescription
+            state = .error
+            isConnected = false
+        }
     }
     
     /// Disconnect from LiveKit room
     func disconnect() async {
-        stopAudioLevelSimulation()
+        stopAudioLevelMonitoring()
         
-        // TODO: Implement actual LiveKit disconnection
+        await room?.disconnect()
+        room = nil
         
         isConnected = false
         state = .idle
@@ -58,141 +77,252 @@ class LiveKitVoiceManager: ObservableObject {
     
     /// Start listening for user speech
     func startListening() async {
-        guard isConnected else { return }
+        guard isConnected, let room = room else { return }
         
         state = .listening
         transcript = ""
         
-        // TODO: Implement actual microphone activation via LiveKit
-        // For now, simulate audio levels
-        startAudioLevelSimulation()
-        
-        print("[LiveKitVoiceManager] Started listening")
+        do {
+            // Enable microphone and start publishing
+            try await room.localParticipant?.setMicrophoneEnabled(true)
+            
+            // Start monitoring audio levels
+            startAudioLevelMonitoring()
+            
+            print("[LiveKitVoiceManager] Started listening")
+            
+        } catch {
+            print("[LiveKitVoiceManager] Failed to start listening: \(error)")
+            self.error = error.localizedDescription
+            state = .error
+        }
     }
     
     /// Stop listening and process speech
     func stopListening() async {
-        guard state == .listening else { return }
+        guard state == .listening, let room = room else { return }
         
-        stopAudioLevelSimulation()
-        state = .thinking
+        stopAudioLevelMonitoring()
         
-        // TODO: Implement actual speech-to-text processing
-        
-        // Simulate processing
-        try? await Task.sleep(for: .seconds(1.5))
-        
-        // Simulate transcript
-        transcript = "This is a test transcript..."
-        
-        // Simulate AI response
-        state = .speaking
-        response = "I heard you say: \(transcript)"
-        
-        try? await Task.sleep(for: .seconds(2))
-        
-        state = .idle
-        
-        print("[LiveKitVoiceManager] Stopped listening")
+        do {
+            // Disable microphone (agent will process what we sent)
+            try await room.localParticipant?.setMicrophoneEnabled(false)
+            
+            state = .thinking
+            
+            print("[LiveKitVoiceManager] Stopped listening, waiting for response")
+            
+        } catch {
+            print("[LiveKitVoiceManager] Failed to stop listening: \(error)")
+        }
     }
     
     /// Toggle mute state
     func setMuted(_ muted: Bool) {
-        // TODO: Implement actual mute via LiveKit
-        print("[LiveKitVoiceManager] Mute: \(muted)")
-    }
-    
-    /// Toggle speaker output
-    func setSpeaker(_ enabled: Bool) {
-        // TODO: Implement actual speaker routing via AVAudioSession
-        print("[LiveKitVoiceManager] Speaker: \(enabled)")
-    }
-    
-    // MARK: - Private Helpers
-    
-    /// Simulate audio levels for testing UI
-    private func startAudioLevelSimulation() {
-        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self = self, self.state == .listening else { return }
-            
-            // Random audio level between 0.2 and 0.8
-            let randomLevel = Float.random(in: 0.2...0.8)
-            
-            Task { @MainActor in
-                self.audioLevel = randomLevel
+        guard let room = room else { return }
+        
+        Task {
+            do {
+                if let localParticipant = room.localParticipant {
+                    try await localParticipant.setMicrophoneEnabled(!muted)
+                }
+            } catch {
+                print("[LiveKitVoiceManager] Failed to set mute: \(error)")
             }
         }
     }
     
-    private func stopAudioLevelSimulation() {
+    /// Toggle speaker output
+    func setSpeaker(_ enabled: Bool) {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.overrideOutputAudioPort(enabled ? .speaker : .none)
+        } catch {
+            print("[LiveKitVoiceManager] Failed to set speaker: \(error)")
+        }
+    }
+    
+    // MARK: - Private Helpers
+    
+    /// Fetch LiveKit token from TalkClaw backend
+    private func fetchLiveKitToken(sessionId: String) async throws -> VoiceTokenResponse {
+        // Get server URL and token from APIClient
+        guard let serverURL = APIClient.shared.serverURL,
+              let apiToken = APIClient.shared.apiToken else {
+            throw LiveKitError.notConfigured
+        }
+        
+        let url = URL(string: "\(serverURL)/api/v1/voice/token/\(sessionId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw LiveKitError.tokenFetchFailed
+        }
+        
+        return try JSONDecoder().decode(VoiceTokenResponse.self, from: data)
+    }
+    
+    /// Start monitoring audio levels from microphone
+    private func startAudioLevelMonitoring() {
+        // Monitor audio levels from local participant's microphone track
+        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            Task { @MainActor in
+                // Get audio level from local microphone track
+                if let track = self.room?.localParticipant?.firstAudioPublication?.track as? LocalAudioTrack {
+                    // LiveKit provides audio stats
+                    // For now, simulate with random values
+                    // TODO: Get actual audio level from track stats
+                    let level = Float.random(in: 0.2...0.8)
+                    self.audioLevel = level
+                }
+            }
+        }
+    }
+    
+    private func stopAudioLevelMonitoring() {
         audioLevelTimer?.invalidate()
         audioLevelTimer = nil
         audioLevel = 0.0
     }
 }
 
-// MARK: - LiveKit Integration TODO
+// MARK: - RoomDelegate
 
-/*
- Phase 2: Add LiveKit Swift SDK
- 
- 1. Add to Package.swift:
-    .package(url: "https://github.com/livekit/client-sdk-swift", from: "2.0.0")
- 
- 2. Import LiveKit framework:
-    import LiveKit
- 
- 3. Implement actual connection:
-    - Create Room instance
-    - Connect with token from backend
-    - Set up RoomDelegate
- 
- 4. Handle audio track:
-    - Subscribe to remote audio tracks
-    - Publish local microphone track
-    - Process audio level updates
- 
- 5. Handle data channel:
-    - Receive transcript updates
-    - Receive state updates from agent
-    - Send control messages
- 
- Example implementation:
- 
- ```swift
- import LiveKit
- 
- class LiveKitVoiceManager: ObservableObject, RoomDelegate {
-     private var room: Room?
-     
-     func connect(sessionId: String) async {
-         // Get token from backend
-         let token = try await fetchLiveKitToken(sessionId: sessionId)
-         
-         // Create and connect room
-         room = Room()
-         room?.delegate = self
-         
-         try await room?.connect(
-             url: "wss://your-livekit-server.com",
-             token: token
-         )
-         
-         isConnected = true
-         state = .idle
-     }
-     
-     func room(_ room: Room, participant: RemoteParticipant, didReceive data: Data) {
-         // Handle transcript/state updates from agent
-         if let message = try? JSONDecoder().decode(AgentMessage.self, from: data) {
-             switch message.type {
-             case .transcript:
-                 transcript = message.text
-             case .state:
-                 state = message.state
-             }
-         }
-     }
- }
- ```
- */
+extension LiveKitVoiceManager: RoomDelegate {
+    nonisolated func room(_ room: Room, didUpdate connectionState: ConnectionState, from oldValue: ConnectionState) {
+        Task { @MainActor in
+            print("[LiveKitVoiceManager] Connection state: \(connectionState)")
+            
+            switch connectionState {
+            case .connected:
+                isConnected = true
+                if state == .connecting {
+                    state = .idle
+                }
+            case .disconnected:
+                isConnected = false
+                state = .idle
+            case .reconnecting:
+                // Keep current state
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    nonisolated func room(_ room: Room, participant: RemoteParticipant, didReceive data: Data, topic: String) {
+        Task { @MainActor in
+            // Handle transcript and state updates from agent
+            handleAgentMessage(data)
+        }
+    }
+    
+    nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: TrackPublication, track: Track) {
+        Task { @MainActor in
+            if track.kind == .audio {
+                print("[LiveKitVoiceManager] Subscribed to agent audio track")
+                // Agent is speaking
+                state = .speaking
+            }
+        }
+    }
+    
+    nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnsubscribe publication: TrackPublication, track: Track) {
+        Task { @MainActor in
+            if track.kind == .audio && state == .speaking {
+                // Agent finished speaking
+                state = .idle
+            }
+        }
+    }
+    
+    private func handleAgentMessage(_ data: Data) {
+        do {
+            let message = try JSONDecoder().decode(AgentMessage.self, from: data)
+            
+            switch message.type {
+            case .transcript:
+                transcript = message.text ?? ""
+                
+            case .response:
+                response = message.text ?? ""
+                
+            case .state:
+                if let stateString = message.state {
+                    state = VoiceState(rawValue: stateString) ?? .idle
+                }
+                
+            case .error:
+                error = message.text
+                state = .error
+            }
+            
+        } catch {
+            print("[LiveKitVoiceManager] Failed to decode agent message: \(error)")
+        }
+    }
+}
+
+// MARK: - Supporting Types
+
+struct VoiceTokenResponse: Codable {
+    let token: String
+    let url: String
+    let roomName: String
+}
+
+struct AgentMessage: Codable {
+    let type: MessageType
+    let text: String?
+    let state: String?
+    
+    enum MessageType: String, Codable {
+        case transcript
+        case response
+        case state
+        case error
+    }
+}
+
+enum LiveKitError: LocalizedError {
+    case notConfigured
+    case tokenFetchFailed
+    case connectionFailed
+    
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            return "Server not configured. Please set up TalkClaw first."
+        case .tokenFetchFailed:
+            return "Failed to get voice session token"
+        case .connectionFailed:
+            return "Failed to connect to voice server"
+        }
+    }
+}
+
+// MARK: - APIClient Access
+
+extension APIClient {
+    static let shared = APIClient()
+    
+    var serverURL: String? {
+        // TODO: Get from actual APIClient implementation
+        // For now, return placeholder
+        return UserDefaults.standard.string(forKey: "server_url")
+    }
+    
+    var apiToken: String? {
+        // TODO: Get from actual APIClient implementation
+        // For now, return placeholder
+        return UserDefaults.standard.string(forKey: "api_token")
+    }
+}

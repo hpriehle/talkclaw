@@ -1,0 +1,23 @@
+{
+  "name": "talkclaw-agent",
+  "version": "1.0.0",
+  "description": "Claude Code CLI bridge for TalkClaw and Telegram",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "express": "^5.0.1",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

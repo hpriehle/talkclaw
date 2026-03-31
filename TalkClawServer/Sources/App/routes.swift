@@ -17,6 +17,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: WidgetLibraryController())
     try protected.register(collection: WidgetSessionController())
     try protected.register(collection: DeviceTokenController())
+    try protected.register(collection: VoiceController())
 
     // Widget serving (token query param auth)
     try app.register(collection: WidgetServeController())
